@@ -103,3 +103,74 @@ No unresolved implementation concern remains. The explicit product limitation
 is preserved: task/event/approval audit data survives restart, while active
 provider/loop continuation does not. Mutations after restart fail with
 `TaskNotLoaded`; no snapshot or provider-state recovery is fabricated.
+
+---
+
+## External review remediation
+
+The external review identified transaction, side-effect ordering, concurrency,
+migration, and audit-detail gaps. All requested fixes were completed test-first.
+
+### RED / GREEN evidence
+
+1. Atomic task/event transitions
+   - RED: a real SQLite trigger failed the second event insert; the new public
+     `commit_transition` interface was initially absent.
+   - GREEN: task projection update, contiguous event allocation, and all event
+     inserts now share one `BEGIN IMMEDIATE`; the injected failure rolls back
+     the projection and every event.
+2. Durable approval intent before external effects
+   - RED: an approvals-table trigger aborted the decision write, but the old
+     service had already executed `rm -rf build`.
+   - GREEN: approve first atomically records the unique approved decision and an
+     `approval` intent event, then calls `resolve_approval`; an intent failure
+     leaves the directory, task, events, and approval table unchanged.
+3. Rejection transaction and reason audit
+   - RED: the rejection reason was absent from event data, and an injected event
+     failure left a separately committed rejected approval row.
+   - GREEN: rejection enriches its approval event with `reason` and commits the
+     decision, post-resolution projection, and loop events in one transaction.
+4. Same-task serialization
+   - RED: two synchronized worker threads entered the same provider concurrently
+     (`max_active == 2`) and raced event synchronization.
+   - GREEN: a per-task `threading.RLock`, created under a small lock-map guard,
+     covers create-after-ID, advance, approve, reject, cancel, and persistence;
+     provider overlap is 1 and the audit sequence contains exactly one copy of
+     each event.
+5. Concurrent repository allocation
+   - Two `TaskRepository` instances appending from two threads produced the
+     complete unique sequence `1..20`, directly exercising `BEGIN IMMEDIATE`.
+6. Explicit migration transaction
+   - RED: unknown version 99 was silently accepted; duplicate authoritative
+     version rows were accepted; an authorizer-injected DDL failure left
+     `schema_version` and `tasks` partially committed.
+   - GREEN: migration now begins an explicit immediate transaction, validates
+     exactly one supported version record, and atomically creates all four
+     tables plus version 1. Unknown/multiple versions fail closed and DDL
+     failure leaves no created tables.
+
+### Post-remediation verification
+
+Focused repository/service suite:
+
+```text
+.venv/bin/python -m pytest tests/test_repository.py tests/test_service.py -q
+..........................                                               [100%]
+26 passed in 0.20s
+```
+
+Full regression suite:
+
+```text
+.venv/bin/python -m pytest -q
+........................................................................ [ 37%]
+........................................................................ [ 75%]
+..............................................                           [100%]
+190 passed in 5.71s
+```
+
+`git diff --check` passed. Tests use real SQLite transactions/triggers and a
+complete deterministic Provider test double only where provider overlap must be
+observed. No test-only production methods or fabricated restart recovery were
+added. The controller-owned `PLAN.md` modification remains outside the Task 7
+staging set. No unresolved concern remains.

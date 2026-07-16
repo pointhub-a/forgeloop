@@ -1,6 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
+import sqlite3
+import threading
+
 import pytest
 
-from forgeloop.models import Action
+from forgeloop.loop import LoopEvent
+from forgeloop.models import Action, TaskStatus
 from forgeloop.repository import ApprovalRepository, TaskNotFound, TaskRepository
 
 
@@ -98,3 +103,111 @@ def test_approval_for_unknown_task_fails_with_task_not_found(db_path):
 
     with pytest.raises(TaskNotFound):
         approvals.record("missing-task", "fingerprint", "approved")
+
+
+def test_commit_transition_rolls_back_projection_and_all_events_on_event_failure(
+    db_path,
+):
+    repository = TaskRepository(db_path)
+    original = repository.create("fix", "/tmp/work")
+    changed = original.model_copy(
+        update={"status": TaskStatus.RUNNING, "step_count": 1}
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_selected_event
+            BEFORE INSERT ON events
+            WHEN NEW.summary = 'forced failure'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced event failure');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced event failure"):
+        repository.commit_transition(
+            changed,
+            [
+                LoopEvent(kind="state", summary="would persist"),
+                LoopEvent(kind="state", summary="forced failure"),
+            ],
+        )
+
+    assert repository.get(original.id) == original
+    assert repository.list_events(original.id) == []
+
+
+def test_concurrent_repositories_allocate_unique_contiguous_event_sequences(db_path):
+    first = TaskRepository(db_path)
+    second = TaskRepository(db_path)
+    task = first.create("fix", "/tmp/work")
+    start = threading.Barrier(3)
+
+    def append_many(repository, label):
+        start.wait()
+        return [
+            repository.append_event(task.id, "state", f"{label}-{index}", {})
+            for index in range(10)
+        ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(append_many, first, "first"),
+            executor.submit(append_many, second, "second"),
+        ]
+        start.wait()
+        stored = [event for future in futures for event in future.result()]
+
+    assert sorted(event.sequence for event in stored) == list(range(1, 21))
+    assert [event.sequence for event in first.list_events(task.id)] == list(
+        range(1, 21)
+    )
+
+
+def test_unknown_schema_version_is_rejected(db_path):
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        connection.execute("INSERT INTO schema_version (version) VALUES (99)")
+
+    with pytest.raises(RuntimeError, match="unsupported schema version: 99"):
+        TaskRepository(db_path)
+
+
+def test_schema_version_requires_one_authoritative_record(db_path):
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+        connection.executemany(
+            "INSERT INTO schema_version (version) VALUES (?)", [(1,), (1,)]
+        )
+
+    with pytest.raises(
+        RuntimeError, match="schema_version must contain exactly one record"
+    ):
+        TaskRepository(db_path)
+
+
+def test_migration_ddl_and_version_insert_roll_back_together(db_path):
+    class DenyEventsMigrationRepository(TaskRepository):
+        def _connect(self):
+            connection = super()._connect()
+
+            def authorizer(action_code, arg1, _arg2, _database, _source):
+                if action_code == sqlite3.SQLITE_CREATE_TABLE and arg1 == "events":
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            connection.set_authorizer(authorizer)
+            return connection
+
+    with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+        DenyEventsMigrationRepository(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        created = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert created == set()

@@ -5,10 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock, RLock
 
-from forgeloop.loop import AgentLoop, ApprovalMismatch
-from forgeloop.models import TaskRecord
-from forgeloop.repository import ApprovalRepository, TaskNotFound, TaskRepository
+from forgeloop.loop import AgentLoop, ApprovalMismatch, LoopEvent
+from forgeloop.models import EventKind, TaskRecord
+from forgeloop.repository import (
+    ApprovalDecision,
+    ApprovalRepository,
+    TaskNotFound,
+    TaskRepository,
+)
 
 
 class TaskNotLoaded(RuntimeError):
@@ -32,37 +38,71 @@ class TaskService:
         self.loop_factory = loop_factory
         self._loops: dict[str, AgentLoop] = {}
         self._synced_event_counts: dict[str, int] = {}
+        self._task_locks: dict[str, RLock] = {}
+        self._task_locks_guard = Lock()
 
     def create(self, description: str, workspace: str | Path) -> TaskRecord:
         task = self.repository.create(description, workspace)
-        loop = self.loop_factory(Path(task.workspace), task.id)
-        self._loops[task.id] = loop
-        self._synced_event_counts[task.id] = 0
-        loop.start(description)
-        return self._sync(task.id, loop)
+        with self._task_lock(task.id):
+            loop = self.loop_factory(Path(task.workspace), task.id)
+            self._loops[task.id] = loop
+            self._synced_event_counts[task.id] = 0
+            loop.start(description)
+            return self._sync(task.id, loop)
 
     def advance(self, task_id: str) -> TaskRecord:
-        loop = self._require_loop(task_id)
-        loop.step()
-        return self._sync(task_id, loop)
+        with self._task_lock(task_id):
+            loop = self._require_loop(task_id)
+            loop.step()
+            return self._sync(task_id, loop)
 
     def reject(self, task_id: str, reason: str = "") -> TaskRecord:
-        loop = self._require_loop(task_id)
-        fingerprint = self._pending_fingerprint(loop)
-        loop.resolve_approval(fingerprint, approved=False)
-        self.approvals.record(task_id, fingerprint, "rejected")
-        return self._sync(task_id, loop)
+        with self._task_lock(task_id):
+            loop = self._require_loop(task_id)
+            fingerprint = self._pending_fingerprint(loop)
+            loop.resolve_approval(fingerprint, approved=False)
+            return self._sync(
+                task_id,
+                loop,
+                approval=ApprovalDecision(fingerprint, "rejected"),
+                final_event_data={"reason": reason},
+            )
 
     def approve(self, task_id: str, fingerprint: str) -> TaskRecord:
-        loop = self._require_loop(task_id)
-        loop.resolve_approval(fingerprint, approved=True)
-        self.approvals.record(task_id, fingerprint, "approved")
-        return self._sync(task_id, loop)
+        with self._task_lock(task_id):
+            loop = self._require_loop(task_id)
+            if self._pending_fingerprint(loop) != fingerprint:
+                raise ApprovalMismatch(
+                    "approval fingerprint does not match pending action"
+                )
+            persisted = self.repository.get(task_id)
+            self.repository.commit_transition(
+                persisted,
+                [
+                    LoopEvent(
+                        kind=EventKind.APPROVAL,
+                        summary="Approval intent recorded before execution.",
+                        data={
+                            "decision": "approved",
+                            "fingerprint": fingerprint,
+                            "phase": "intent",
+                        },
+                    )
+                ],
+                approval=ApprovalDecision(fingerprint, "approved"),
+            )
+            loop.resolve_approval(fingerprint, approved=True)
+            return self._sync(task_id, loop)
 
     def cancel(self, task_id: str) -> TaskRecord:
-        loop = self._require_loop(task_id)
-        loop.cancel()
-        return self._sync(task_id, loop)
+        with self._task_lock(task_id):
+            loop = self._require_loop(task_id)
+            loop.cancel()
+            return self._sync(task_id, loop)
+
+    def _task_lock(self, task_id: str) -> RLock:
+        with self._task_locks_guard:
+            return self._task_locks.setdefault(task_id, RLock())
 
     @staticmethod
     def _pending_fingerprint(loop: AgentLoop) -> str:
@@ -78,7 +118,14 @@ class TaskService:
         self.repository.get(task_id)
         raise TaskNotLoaded(task_id)
 
-    def _sync(self, task_id: str, loop: AgentLoop) -> TaskRecord:
+    def _sync(
+        self,
+        task_id: str,
+        loop: AgentLoop,
+        *,
+        approval: ApprovalDecision | None = None,
+        final_event_data: dict[str, object] | None = None,
+    ) -> TaskRecord:
         state = loop.state
         if state is None:
             raise RuntimeError("AgentLoop has not been started.")
@@ -94,16 +141,17 @@ class TaskService:
             created_at=persisted.created_at,
             updated_at=datetime.now(timezone.utc),
         )
-        self.repository.save(task)
-
         synced_count = self._synced_event_counts[task_id]
-        for event in state.events[synced_count:]:
-            self.repository.append_event(
-                task_id,
-                event.kind.value,
-                event.summary,
-                event.data,
+        pending_events = list(state.events[synced_count:])
+        if final_event_data and pending_events:
+            final_event = pending_events[-1]
+            pending_events[-1] = LoopEvent(
+                kind=final_event.kind,
+                summary=final_event.summary,
+                data={**final_event.data, **final_event_data},
             )
-            synced_count += 1
-            self._synced_event_counts[task_id] = synced_count
+        self.repository.commit_transition(
+            task, pending_events, approval=approval
+        )
+        self._synced_event_counts[task_id] = len(state.events)
         return task

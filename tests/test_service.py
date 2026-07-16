@@ -1,5 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+import sqlite3
+import threading
+import time
 
 import pytest
 
@@ -26,6 +30,28 @@ def action(kind, **arguments):
 class NoValidators:
     def run_all(self):
         return []
+
+
+class OverlapDetectProvider:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+        self.max_active = 0
+        self._active = 0
+        self._guard = threading.Lock()
+
+    def complete(self, messages, action_schema):
+        with self._guard:
+            index = len(self.calls)
+            self.calls.append((list(messages), action_schema))
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(0.03)
+            return self.responses[index]
+        finally:
+            with self._guard:
+                self._active -= 1
 
 
 def loop_factory_for(responses):
@@ -129,7 +155,11 @@ def test_reject_pending_action_returns_task_to_running(repositories, tmp_path):
     events = tasks.list_events(task.id)
     assert events[: len(events_before)] == events_before
     assert events[-1].kind.value == "approval"
-    assert events[-1].data == {"approved": False, "fingerprint": fingerprint}
+    assert events[-1].data == {
+        "approved": False,
+        "fingerprint": fingerprint,
+        "reason": "not allowed",
+    }
 
 
 def test_approval_for_wrong_fingerprint_fails_closed(repositories, tmp_path):
@@ -243,3 +273,126 @@ def test_unknown_task_is_distinct_from_persisted_not_loaded_task(repositories):
 
     with pytest.raises(TaskNotFound):
         service.advance("missing-task")
+
+
+def test_approval_intent_failure_never_executes_pending_tool(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+    factory, _ = loop_factory_for(
+        [action("run_command", argv=["rm", "-rf", "build"])]
+    )
+    service = TaskService(tasks, approvals, factory)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "build").mkdir()
+    pending = service.advance(service.create("clean", workspace).id)
+    fingerprint = action_fingerprint(pending.pending_action)
+    events_before = tasks.list_events(pending.id)
+    with sqlite3.connect(tasks.db_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_approval_intent
+            BEFORE INSERT ON approvals
+            BEGIN
+                SELECT RAISE(ABORT, 'forced approval intent failure');
+            END
+            """
+        )
+
+    with pytest.raises(
+        sqlite3.IntegrityError, match="forced approval intent failure"
+    ):
+        service.approve(pending.id, fingerprint)
+
+    assert (workspace / "build").is_dir()
+    assert tasks.get(pending.id) == pending
+    assert tasks.list_events(pending.id) == events_before
+    assert approvals.list_for_task(pending.id) == []
+
+
+def test_rejection_audit_failure_rolls_back_approval_projection_and_events(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+    factory, _ = loop_factory_for(
+        [action("run_command", argv=["rm", "-rf", "build"])]
+    )
+    service = TaskService(tasks, approvals, factory)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    pending = service.advance(service.create("clean", workspace).id)
+    events_before = tasks.list_events(pending.id)
+    with sqlite3.connect(tasks.db_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_rejection_audit
+            BEFORE INSERT ON events
+            WHEN NEW.summary = 'Pending action rejected.'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced rejection audit failure');
+            END
+            """
+        )
+
+    with pytest.raises(
+        sqlite3.IntegrityError, match="forced rejection audit failure"
+    ):
+        service.reject(pending.id, reason="not allowed")
+
+    assert tasks.get(pending.id) == pending
+    assert tasks.list_events(pending.id) == events_before
+    assert approvals.list_for_task(pending.id) == []
+
+
+def test_same_task_advances_are_serialized_through_provider_and_persistence(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+    provider = OverlapDetectProvider(
+        [
+            action("read_file", path="note.txt"),
+            action("read_file", path="note.txt"),
+        ]
+    )
+
+    def factory(workspace: Path, task_id: str):
+        config = HarnessConfig(max_steps=10)
+        return AgentLoop(
+            provider=provider,
+            policy=PolicyEngine(config),
+            tools=ToolRuntime(workspace, config),
+            validators=NoValidators(),
+            progress=ProgressTracker(
+                max_identical_failures=config.max_identical_failures,
+                max_identical_actions=config.max_identical_actions,
+            ),
+            memory=MemoryStore(":memory:"),
+            config=config,
+            project_id=task_id,
+        )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("hello")
+    service = TaskService(tasks, approvals, factory)
+    task = service.create("read", workspace)
+    start = threading.Barrier(3)
+
+    def advance_once():
+        start.wait()
+        return service.advance(task.id)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(advance_once) for _ in range(2)]
+        start.wait()
+        results = [future.result() for future in futures]
+
+    persisted = tasks.get(task.id)
+    events = tasks.list_events(task.id)
+    assert provider.max_active == 1
+    assert len(provider.calls) == 2
+    assert persisted.step_count == 2
+    assert all(result.step_count in {1, 2} for result in results)
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    assert len(events) == 9

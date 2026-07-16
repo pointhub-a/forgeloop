@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -9,6 +10,7 @@ from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
+from forgeloop.loop import LoopEvent
 from forgeloop.models import Event, TaskRecord, TaskStatus
 
 
@@ -26,6 +28,14 @@ class ApprovalRecord:
     decision: str
     used_at: datetime | None
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class ApprovalDecision:
+    """Approval data to write as part of a task transition."""
+
+    action_fingerprint: str
+    decision: str
 
 
 class TaskRepository:
@@ -181,6 +191,115 @@ class TaskRepository:
             ).fetchall()
         return [self._event_from_row(row) for row in rows]
 
+    def commit_transition(
+        self,
+        task: TaskRecord,
+        events: Iterable[LoopEvent],
+        *,
+        approval: ApprovalDecision | None = None,
+    ) -> list[Event]:
+        """Atomically persist one task projection and all newly emitted events."""
+
+        task.workspace = str(Path(task.workspace).expanduser().resolve())
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            pending_action_json = None
+            if task.pending_action is not None:
+                pending_action_json = json.dumps(
+                    task.pending_action.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            cursor = connection.execute(
+                """
+                UPDATE tasks
+                SET description = ?, workspace = ?, status = ?, step_count = ?,
+                    last_validation_passed = ?, pending_action_json = ?,
+                    created_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    task.description,
+                    task.workspace,
+                    task.status.value,
+                    task.step_count,
+                    int(task.last_validation_passed),
+                    pending_action_json,
+                    task.created_at.isoformat(),
+                    task.updated_at.isoformat(),
+                    task.id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise TaskNotFound(task.id)
+
+            if approval is not None:
+                now = datetime.now(timezone.utc)
+                connection.execute(
+                    """
+                    INSERT INTO approvals (
+                        id, task_id, action_fingerprint, decision,
+                        used_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid4()),
+                        task.id,
+                        approval.action_fingerprint,
+                        approval.decision,
+                        now.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+
+            row = connection.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM events WHERE task_id = ?",
+                (task.id,),
+            ).fetchone()
+            next_sequence = int(row[0])
+            stored_events: list[Event] = []
+            for offset, pending in enumerate(events):
+                event = Event(
+                    id=str(uuid4()),
+                    task_id=task.id,
+                    sequence=next_sequence + offset,
+                    kind=pending.kind,
+                    summary=pending.summary,
+                    data=pending.data,
+                    created_at=datetime.now(timezone.utc),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO events (
+                        id, task_id, sequence, kind, summary, data_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.id,
+                        event.task_id,
+                        event.sequence,
+                        event.kind.value,
+                        event.summary,
+                        json.dumps(
+                            event.data,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        event.created_at.isoformat(),
+                    ),
+                )
+                stored_events.append(event)
+            connection.commit()
+            return stored_events
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
@@ -219,19 +338,37 @@ class TaskRepository:
         )
 
     def _migrate(self) -> None:
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
             connection.execute("PRAGMA journal_mode = WAL")
-            connection.executescript(
+            connection.execute("BEGIN IMMEDIATE")
+            version_table = connection.execute(
                 """
-                CREATE TABLE IF NOT EXISTS schema_version (
-                    version INTEGER NOT NULL
-                );
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'schema_version'
+                """
+            ).fetchone()
+            if version_table is not None:
+                versions = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT version FROM schema_version"
+                    ).fetchall()
+                ]
+                if len(versions) != 1:
+                    raise RuntimeError(
+                        "schema_version must contain exactly one record"
+                    )
+                if versions[0] != 1:
+                    raise RuntimeError(
+                        f"unsupported schema version: {versions[0]}"
+                    )
+                connection.commit()
+                return
 
-                INSERT INTO schema_version (version)
-                SELECT 1
-                WHERE NOT EXISTS (SELECT 1 FROM schema_version);
-
-                CREATE TABLE IF NOT EXISTS tasks (
+            connection.execute(
+                """
+                CREATE TABLE tasks (
                     id TEXT PRIMARY KEY,
                     description TEXT NOT NULL,
                     workspace TEXT NOT NULL,
@@ -241,9 +378,12 @@ class TaskRepository:
                     pending_action_json TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS events (
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE events (
                     id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
                     sequence INTEGER NOT NULL,
@@ -252,9 +392,12 @@ class TaskRepository:
                     data_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     UNIQUE(task_id, sequence)
-                );
-
-                CREATE TABLE IF NOT EXISTS approvals (
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE approvals (
                     id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
                     action_fingerprint TEXT NOT NULL,
@@ -262,9 +405,25 @@ class TaskRepository:
                     used_at TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE(task_id, action_fingerprint)
-                );
+                )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE schema_version (
+                    version INTEGER PRIMARY KEY CHECK (version = 1)
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO schema_version (version) VALUES (1)"
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
 
 class ApprovalRepository:
