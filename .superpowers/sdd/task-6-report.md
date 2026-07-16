@@ -60,3 +60,49 @@ deterministic stopping without an agent framework or network-dependent tests.
 - Confirmed `LoopState` owns every required field and `run()` stops on terminal or
   waiting states.
 - No unresolved concerns.
+
+## External review remediation
+
+External review reported two Critical and three Important issues. All five were
+fixed test-first:
+
+1. Canonical pending approval authority
+   - RED: mutating `state.pending_action.arguments` caused the mutated command B to
+     execute instead of approved command A.
+   - GREEN: pending action JSON, fingerprint, rule ID, and deferred progress are
+     private loop state. Resolution rebuilds `Action` from the canonical snapshot,
+     recomputes its fingerprint, and re-evaluates the same `require_approval` policy
+     decision before consuming the approval and executing the rebuilt action.
+   - Approval focused result: **3 passed** after this fix.
+2. Validation invalidation before mutation attempts
+   - RED: a command wrote a side-effect file, exited nonzero, and then incorrectly
+     finished using the earlier passing validation.
+   - GREEN: `write_file`, `replace_text`, and `run_command` attempts invalidate prior
+     validation immediately before runtime execution, independent of result status.
+   - Mutation focused result: **2 passed**.
+3. Re-proposed consumed approvals
+   - RED: the same consumed fingerprint created a second waiting approval.
+   - GREEN: consumed fingerprints now produce safe feedback and an approval event,
+     stay non-pending/running, and allow the model to choose a different next action.
+   - Focused result: **1 passed**.
+4. Approval-resume stop settlement
+   - RED: both approval and rejection returned `running` despite an exhausted step
+     budget.
+   - GREEN: both paths call the unified stop-order function with deferred progress;
+     parameterized approval/rejection tests prove `max_steps=1` stops without a
+     second provider call.
+   - Approval focused result after all approval fixes: **6 passed**.
+5. Memory backend exception boundary
+   - RED: SQLite and OS errors escaped from both remember and recall paths (4 failed).
+   - GREEN: `sqlite3.Error` and `OSError` become fixed, redacted tool feedback/events
+     without exposing backend details.
+   - Memory backend focused result: **4 passed**.
+
+Post-remediation verification:
+
+- Focused: `.venv/bin/python -m pytest tests/test_providers.py tests/test_loop.py -q`
+  — **41 passed in 0.16s**.
+- Full: `.venv/bin/python -m pytest -q`
+  — **164 passed in 5.57s**.
+- `git diff --check` passed.
+- No unresolved concerns after remediation.

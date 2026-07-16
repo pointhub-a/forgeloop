@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 
@@ -354,6 +355,24 @@ def test_approval_mismatch_and_consumption_never_double_execute(tmp_path):
     assert len(resumed.tool_calls) == 1
 
 
+def test_approval_executes_canonical_snapshot_not_mutated_display_action(tmp_path):
+    (tmp_path / "build-a").mkdir()
+    (tmp_path / "build-b").mkdir()
+    provider = ScriptedProvider(
+        [action("run_command", argv=["rm", "-rf", "build-a"])]
+    )
+    loop = make_loop(tmp_path, provider)
+    state = loop.run("clean")
+    fingerprint = state.pending_decision.fingerprint
+
+    state.pending_action.arguments["argv"][-1] = "build-b"
+    resumed = loop.resolve_approval(fingerprint, approved=True)
+
+    assert resumed.tool_calls[-1].arguments["argv"][-1] == "build-a"
+    assert not (tmp_path / "build-a").exists()
+    assert (tmp_path / "build-b").exists()
+
+
 def test_rejected_approval_resumes_with_feedback_and_cannot_be_reused(tmp_path):
     provider = ScriptedProvider(
         [action("run_command", argv=["rm", "-rf", "build"])]
@@ -373,6 +392,56 @@ def test_rejected_approval_resumes_with_feedback_and_cannot_be_reused(tmp_path):
     assert json.loads(resumed.messages[-1]["content"])["type"] == "approval_rejected"
     with pytest.raises(ApprovalMismatch):
         loop.resolve_approval(fingerprint, approved=False)
+
+
+def test_used_approval_fingerprint_is_feedback_not_a_new_pending_action(tmp_path):
+    repeated = action("run_command", argv=["rm", "-rf", "build"])
+    provider = ScriptedProvider(
+        [repeated, repeated, action("run_validation")]
+    )
+    loop = make_loop(
+        tmp_path,
+        provider,
+        validation_results=[[passed()]],
+        max_steps=4,
+    )
+    state = loop.run("clean")
+    fingerprint = state.pending_decision.fingerprint
+    loop.resolve_approval(fingerprint, approved=True)
+
+    after_repeat = loop.step()
+
+    assert after_repeat.status == "running"
+    assert after_repeat.pending_action is None
+    assert after_repeat.pending_decision is None
+    assert len(after_repeat.tool_calls) == 1
+    assert after_repeat.messages[-1]["role"] == "feedback"
+    assert json.loads(after_repeat.messages[-1]["content"])["type"] == (
+        "approval_already_used"
+    )
+
+    after_change = loop.step()
+    assert after_change.validation_count == 1
+    assert len(provider.calls) == 3
+
+
+@pytest.mark.parametrize("approved,expected_tool_calls", [(True, 1), (False, 0)])
+def test_approval_resolution_settles_step_budget_without_another_model_call(
+    tmp_path, approved, expected_tool_calls
+):
+    provider = ScriptedProvider(
+        [action("run_command", argv=["rm", "-rf", "build"])]
+    )
+    loop = make_loop(tmp_path, provider, max_steps=1)
+    state = loop.run("clean")
+    fingerprint = state.pending_decision.fingerprint
+
+    resolved = loop.resolve_approval(fingerprint, approved=approved)
+
+    assert resolved.status == "budget_exhausted"
+    assert resolved.events[-1].data["reason"] == "steps"
+    assert len(resolved.tool_calls) == expected_tool_calls
+    assert len(provider.calls) == 1
 
 
 def test_successful_workspace_mutation_invalidates_prior_validation(tmp_path):
@@ -400,3 +469,84 @@ def test_successful_workspace_mutation_invalidates_prior_validation(tmp_path):
 
     assert result.status == "budget_exhausted"
     assert result.last_validation_passed is False
+
+
+def test_failed_mutation_attempt_invalidates_prior_validation(tmp_path):
+    (tmp_path / "side_effect.py").write_text(
+        "from pathlib import Path\n"
+        "Path('side-effect.txt').write_text('changed')\n"
+        "raise SystemExit(1)\n"
+    )
+    provider = ScriptedProvider(
+        [
+            action("run_validation"),
+            action("run_command", argv=["python3", "side_effect.py"]),
+            action("finish", summary="not revalidated"),
+        ]
+    )
+
+    result = make_loop(
+        tmp_path,
+        provider,
+        validation_results=[[passed()]],
+        max_steps=3,
+    ).run("fix")
+
+    assert (tmp_path / "side-effect.txt").read_text() == "changed"
+    assert result.status == "budget_exhausted"
+    assert result.last_validation_passed is False
+
+
+class FailingMemoryBackend:
+    def __init__(self, error):
+        self.error = error
+
+    def upsert(self, project_id, key, value, tags):
+        raise self.error
+
+    def recall(self, project_id, tags, limit, char_budget):
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    "memory_action,error",
+    [
+        (
+            action("remember", key="fact", value="value", tags=["tag"]),
+            sqlite3.OperationalError("sqlite detail must not leak"),
+        ),
+        (
+            action("remember", key="fact", value="value", tags=["tag"]),
+            OSError("filesystem detail must not leak"),
+        ),
+        (
+            action("recall", tags=["tag"]),
+            sqlite3.OperationalError("sqlite detail must not leak"),
+        ),
+        (
+            action("recall", tags=["tag"]),
+            OSError("filesystem detail must not leak"),
+        ),
+    ],
+)
+def test_memory_backend_failures_become_redacted_tool_feedback(
+    tmp_path, memory_action, error
+):
+    provider = ScriptedProvider([memory_action])
+    loop = make_loop(
+        tmp_path,
+        provider,
+        max_steps=2,
+        memory=FailingMemoryBackend(error),
+    )
+    loop.start("use memory")
+
+    state = loop.step()
+
+    assert state.status == "running"
+    assert len(state.tool_calls) == 1
+    assert state.messages[-1]["role"] == "tool"
+    feedback = json.loads(state.messages[-1]["content"])
+    assert feedback["type"] == "memory_error"
+    assert str(error) not in state.messages[-1]["content"]
+    assert state.events[-1].data["ok"] is False

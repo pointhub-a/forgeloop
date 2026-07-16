@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import sqlite3
 import time
 
 from forgeloop.feedback import all_validations_passed
@@ -76,6 +77,10 @@ class AgentLoop:
         self.project_id = project_id
         self.state: LoopState | None = None
         self._started_at: float | None = None
+        self._pending_action_snapshot: str | None = None
+        self._pending_fingerprint: str | None = None
+        self._pending_rule_id: str | None = None
+        self._pending_no_progress = False
 
     def start(self, description: str) -> LoopState:
         self.state = LoopState(
@@ -84,6 +89,7 @@ class AgentLoop:
             messages=[{"role": "user", "content": description}],
         )
         self._started_at = time.monotonic()
+        self._clear_private_pending()
         self._event(EventKind.STATE, "Task started.", {"status": "running"})
         return self.state
 
@@ -137,17 +143,41 @@ class AgentLoop:
             {"decision": decision.model_dump(mode="json")},
         )
         if decision.effect is DecisionEffect.REQUIRE_APPROVAL:
-            state.pending_action = action
-            state.pending_decision = decision
-            state.status = TaskStatus.WAITING_APPROVAL
-            self._event(
-                EventKind.STATE,
-                "Waiting for approval.",
-                {
-                    "status": state.status.value,
-                    "fingerprint": decision.fingerprint,
-                },
-            )
+            if fingerprint in state.used_approvals:
+                self._message(
+                    "feedback",
+                    {
+                        "type": "approval_already_used",
+                        "message": "That exact action approval was already consumed.",
+                        "fingerprint": fingerprint,
+                    },
+                )
+                self._event(
+                    EventKind.APPROVAL,
+                    "Already-consumed approval fingerprint was proposed again.",
+                    {"fingerprint": fingerprint, "used": True},
+                )
+            else:
+                snapshot = json.dumps(
+                    action.model_dump(mode="json"),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                state.pending_action = Action.model_validate_json(snapshot)
+                state.pending_decision = decision
+                self._pending_action_snapshot = snapshot
+                self._pending_fingerprint = decision.fingerprint
+                self._pending_rule_id = decision.rule_id
+                self._pending_no_progress = action_progress.should_stop
+                state.status = TaskStatus.WAITING_APPROVAL
+                self._event(
+                    EventKind.STATE,
+                    "Waiting for approval.",
+                    {
+                        "status": state.status.value,
+                        "fingerprint": decision.fingerprint,
+                    },
+                )
         elif decision.effect is DecisionEffect.DENY:
             state.status = TaskStatus.DENIED
             self._message(
@@ -185,6 +215,7 @@ class AgentLoop:
         state.status = TaskStatus.CANCELLED
         state.pending_action = None
         state.pending_decision = None
+        self._clear_private_pending()
         self._event(
             EventKind.STATE,
             "Task cancelled.",
@@ -194,20 +225,34 @@ class AgentLoop:
 
     def resolve_approval(self, fingerprint: str, approved: bool) -> LoopState:
         state = self._require_state()
-        decision = state.pending_decision
-        action = state.pending_action
         if (
             state.status is not TaskStatus.WAITING_APPROVAL
-            or decision is None
-            or action is None
-            or decision.fingerprint != fingerprint
+            or self._pending_action_snapshot is None
+            or self._pending_fingerprint != fingerprint
+            or self._pending_rule_id is None
             or fingerprint in state.used_approvals
         ):
             raise ApprovalMismatch("approval fingerprint does not match pending action")
 
+        try:
+            action = Action.model_validate_json(self._pending_action_snapshot)
+        except ValueError:
+            raise ApprovalMismatch("pending approval snapshot is invalid") from None
+        if action_fingerprint(action) != fingerprint:
+            raise ApprovalMismatch("pending approval snapshot fingerprint changed")
+        current_decision = self.policy.evaluate(action, self.tools.workspace)
+        if (
+            current_decision.effect is not DecisionEffect.REQUIRE_APPROVAL
+            or current_decision.fingerprint != fingerprint
+            or current_decision.rule_id != self._pending_rule_id
+        ):
+            raise ApprovalMismatch("pending action no longer has the same policy decision")
+
+        no_progress = self._pending_no_progress
         state.used_approvals.add(fingerprint)
         state.pending_action = None
         state.pending_decision = None
+        self._clear_private_pending()
         state.status = TaskStatus.RUNNING
         self._event(
             EventKind.APPROVAL,
@@ -215,7 +260,7 @@ class AgentLoop:
             {"approved": approved, "fingerprint": fingerprint},
         )
         if approved:
-            self._execute(action)
+            no_progress = self._execute(action) or no_progress
         else:
             self._message(
                 "feedback",
@@ -225,7 +270,14 @@ class AgentLoop:
                     "fingerprint": fingerprint,
                 },
             )
+        self._finish_step(no_progress=no_progress)
         return state
+
+    def _clear_private_pending(self) -> None:
+        self._pending_action_snapshot = None
+        self._pending_fingerprint = None
+        self._pending_rule_id = None
+        self._pending_no_progress = False
 
     def _execute(self, action: Action) -> bool:
         state = self._require_state()
@@ -295,20 +347,8 @@ class AgentLoop:
             state.tool_calls.append(action)
             try:
                 self.memory.upsert(self.project_id, key, value, tags)
-            except (TypeError, ValueError):
-                self._message(
-                    "tool",
-                    {
-                        "type": "memory_error",
-                        "action": "remember",
-                        "message": "The memory could not be stored safely.",
-                    },
-                )
-                self._event(
-                    EventKind.TOOL_RESULT,
-                    "Memory remember failed.",
-                    {"action": "remember", "ok": False},
-                )
+            except (TypeError, ValueError, sqlite3.Error, OSError):
+                self._memory_backend_failure(action)
                 return False
             self._message(
                 "tool",
@@ -334,12 +374,16 @@ class AgentLoop:
                 )
                 return False
             state.tool_calls.append(action)
-            records = self.memory.recall(
-                self.project_id,
-                tags,
-                self.config.memory_recall_limit,
-                self.config.memory_char_budget,
-            )
+            try:
+                records = self.memory.recall(
+                    self.project_id,
+                    tags,
+                    self.config.memory_recall_limit,
+                    self.config.memory_char_budget,
+                )
+            except (sqlite3.Error, OSError):
+                self._memory_backend_failure(action)
+                return False
             serialized = [
                 {
                     "key": record.key,
@@ -380,13 +424,9 @@ class AgentLoop:
             return False
 
         state.tool_calls.append(action)
-        result = self.tools.execute(action)
-        if result.ok and action.kind.value in {
-            "write_file",
-            "replace_text",
-            "run_command",
-        }:
+        if action.kind.value in {"write_file", "replace_text", "run_command"}:
             state.last_validation_passed = False
+        result = self.tools.execute(action)
         self._message(
             "tool",
             {
@@ -414,6 +454,21 @@ class AgentLoop:
         self._event(
             EventKind.TOOL_RESULT,
             f"Memory {action.kind.value} failed.",
+            {"action": action.kind.value, "ok": False},
+        )
+
+    def _memory_backend_failure(self, action: Action) -> None:
+        self._message(
+            "tool",
+            {
+                "type": "memory_error",
+                "action": action.kind.value,
+                "message": "The memory backend could not be accessed safely.",
+            },
+        )
+        self._event(
+            EventKind.TOOL_RESULT,
+            f"Memory {action.kind.value} backend failed.",
             {"action": action.kind.value, "ok": False},
         )
 
