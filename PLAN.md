@@ -110,7 +110,7 @@ def test_default_config_has_bounded_budgets():
 
 - [x] **Step 5: Implement TOML schema and loader**
 
-Use `tomllib`; define `ValidatorConfig(argv: list[str], timeout_seconds: int = 60)`. Define every `HarnessConfig` field with the exact type and default from SPEC §5.7: `max_steps=20`, `max_validation_runs=8`, `wall_time_seconds=900`, `command_timeout_seconds=60`, `provider_timeout_seconds=60`, `max_output_bytes=32768`, `max_file_bytes=1048576`, `max_identical_failures=2`, `max_identical_actions=3`, `memory_recall_limit=10`, `memory_char_budget=4096`, the five allowed executables, the seven approval rule IDs, empty validators, the HTTPS provider URL, and model `gpt-4.1-mini`. Reject unknown fields and invalid limits with a `ConfigError` that includes the field path.
+Use `tomllib`; define `ValidatorConfig(argv: list[str], timeout_seconds: int = 60)`. Define every `HarnessConfig` field with the exact type and default from SPEC §5.7: `max_steps=20`, `max_validation_runs=8`, `wall_time_seconds=900`, `command_timeout_seconds=60`, `provider_timeout_seconds=60`, `max_output_bytes=32768`, `max_file_bytes=1048576`, `max_identical_failures=2`, `max_identical_actions=3`, `memory_recall_limit=10`, `memory_char_budget=4096`, the five allowed executables, the seven approval rule IDs, empty validators, the HTTPS provider URL, and model `gpt-5.6-luna`. Reject unknown fields and invalid limits with a `ConfigError` that includes the field path.
 
 - [x] **Step 6: Add packaging and one-command tests**
 
@@ -366,7 +366,11 @@ Commit: `feat: persist scoped memory and secure credentials [agent: delegated-wo
 
 **Interfaces:**
 - Consumes: all domain interfaces, `PolicyEngine`, `ToolRuntime`, `ValidatorRunner`, `ProgressTracker`, `MemoryStore`.
-- Produces: `Provider.complete(messages, action_schema) -> str`, `ScriptedProvider`, `OpenAICompatibleProvider`, `AgentLoop.start`, `AgentLoop.step`, `AgentLoop.resolve_approval`.
+- Produces: `Provider.complete(messages, action_schema) -> str`, `ScriptedProvider`, `OpenAICompatibleProvider`, `parse_action`, `LoopEvent`, `LoopState`, `AgentLoop.start`, `AgentLoop.step`, `AgentLoop.run`, `AgentLoop.resolve_approval`, `AgentLoop.cancel`.
+
+`ScriptedProvider.responses` retains the immutable input sequence, consumes by index, and records `calls: list[tuple[list[dict[str, str]], dict[str, object]]]`. `OpenAICompatibleProvider(base_url, model, api_key, timeout_seconds, opener=urlopen)` performs exactly one Chat Completions-style request containing `model`, normalized `messages`, and JSON response format, then returns `choices[0].message.content`; its repr and errors never expose `api_key`.
+
+`LoopState` owns `description`, `status`, `messages`, `events`, `step_count`, `validation_count`, `last_validation_passed`, `pending_action`, `pending_decision`, `used_approvals`, `summary`, and `tool_calls`. `AgentLoop(provider, policy, tools, validators, progress, memory, config, project_id)` is stateful: `start(description)` initializes state, `step()` performs exactly one model decision, `run(description)` starts and steps until a terminal/waiting state, `resolve_approval(fingerprint, approved)` only handles the exact pending fingerprint once, and `cancel()` deterministically marks cancellation. Internal feedback/tool roles remain visible to `ScriptedProvider`; the HTTP adapter maps non-API roles to prefixed user messages.
 
 - [ ] **Step 1: Write failing scripted-provider tests**
 
@@ -383,7 +387,7 @@ def test_scripted_provider_fails_when_exhausted():
 
 - [ ] **Step 2: Implement provider protocol and strict action parser**
 
-Strip an optional fenced JSON wrapper only; parse exactly one JSON object; validate via `Action`; return a structured parse observation on error. Implement HTTP provider with `urllib.request`, explicit timeout, bearer header, one request/response, and redacted exceptions.
+Strip an optional fenced JSON wrapper only; parse exactly one JSON object; validate via `Action`; raise `ActionParseError` whose safe message can be appended as a structured feedback observation. Implement HTTP provider with `urllib.request`, explicit timeout, bearer header, one request/response, response-shape validation, internal-role normalization, and redacted exceptions.
 
 - [ ] **Step 3: Write failing loop feedback-correction test**
 
@@ -416,11 +420,11 @@ def test_finish_without_passing_validation_is_rejected(harness):
 
 - [ ] **Step 5: Implement one-step loop and stop order**
 
-For each step: build bounded context, call provider, parse action, emit action event, evaluate policy, pause/deny/execute, convert validation to feedback, update progress, then evaluate stop conditions in order: cancelled, waiting approval, no progress, wall clock, steps, provider failure. `finish` succeeds only with latest passing validation.
+For each step: build a context bounded to the newest 64 KiB of message content, call provider, parse action, emit action event, observe the action fingerprint, evaluate policy, pause/deny/execute, convert validation to feedback, update progress, then evaluate stop conditions in order: cancelled, waiting approval, no progress, wall clock, steps, provider failure. Parse/provider failures count as steps and become safe feedback until the step budget is exhausted. `finish` succeeds only with latest passing validation; empty validators can never satisfy the gate.
 
 - [ ] **Step 6: Add memory actions and approval-resume tests**
 
-Verify `remember`/`recall` never bypass policy or context budget. Approval accepts only the exact pending fingerprint, marks the token consumed, executes once, and resumes the next loop step.
+Verify `remember`/`recall` use the configured project ID and recall limit/character budget. Approval accepts only the exact pending fingerprint, marks it consumed before execution, executes once, clears pending state, and resumes at `running`; rejection clears pending, appends feedback, and also resumes. A consumed or mismatched fingerprint raises `ApprovalMismatch` without executing a tool.
 
 - [ ] **Step 7: Verify and commit**
 

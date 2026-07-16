@@ -177,7 +177,7 @@ running -> succeeded | failed | budget_exhausted | no_progress | cancelled
 | `approval_rule_ids` | 字符串列表 | `command.recursive_delete, git.force_push, git.hard_reset, database.drop, privilege.escalation, permission.change, network.execute` |
 | `validators` | `ValidatorConfig` 列表 | 空列表 |
 | `provider_base_url` | HTTPS URL | `https://api.openai.com/v1/chat/completions` |
-| `provider_model` | 非空字符串 | `gpt-4.1-mini` |
+| `provider_model` | 非空字符串 | `gpt-5.6-luna` |
 
 `ValidatorConfig` 只包含 `argv: list[str]` 和 `timeout_seconds: 1–120 的整数（默认 60）`。工作区是每个 Task 的必填输入，而不是全局配置，避免一个服务只能操作单一仓库。API Key 不得出现在 TOML 中。
 
@@ -266,7 +266,7 @@ Agent Loop ---- Provider Adapter ---- LLM HTTP API
 - pytest：参数化和临时目录适合确定性机制测试。
 - `keyring`：跨平台调用操作系统凭据存储；不可用时明确报错，不静默降级为明文。
 - Docker：提供一致分发；容器环境无法使用宿主 Keychain 时，以运行时 secret 文件作为安全来源，不写入镜像。
-- OpenAI-compatible HTTP adapter：减少供应商锁定；默认离线 Mock 可运行。
+- OpenAI-compatible HTTP adapter：减少供应商锁定；默认离线 Mock 可运行。真实适配器默认模型为 2026-07-17 官方模型指南中的成本敏感选项 `gpt-5.6-luna`，仍可通过 TOML 覆盖。
 
 不使用任何高层 Agent 框架。
 

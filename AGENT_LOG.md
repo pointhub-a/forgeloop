@@ -76,3 +76,10 @@
 - 外部评审：发现 memory value 可携 token-shaped 明文落库（Critical）及空凭据误报（Important）。
 - 修复：共享 token predicate，写 SQL 前拒绝敏感 value；直接查询 DB 证明零落盘；空白 secret 在 backend 前拒绝并统一旧值语义。
 - 最终：28 focused / 123 full；Spec PASS；Task Quality PASS—READY。
+
+## 2026-07-17 — DOCS-API-001
+
+- 技能：`openai-docs`；官方 MCP 未暴露，按技能规则回退至 OpenAI 官方开发者文档。
+- 发现：2026-07-17 模型指南推荐 GPT-5.6 系列；GPT-4.1 mini 已列为 deprecated。
+- 决策：真实 Provider 的默认配置改为成本敏感 `gpt-5.6-luna`；仍允许 TOML 覆盖；离线 Mock 不受影响。
+- 来源：https://developers.openai.com/api/docs/models 与 https://developers.openai.com/api/docs/models/all
