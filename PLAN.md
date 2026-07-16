@@ -246,15 +246,17 @@ Commit: `feat: add bounded workspace tool runtime [agent: delegated-worker]`.
 
 ### Task 4: Validation Feedback and No-Progress Detection
 
+**Status:** Complete — commit `486e2e0`; spec compliance ✅; task quality approved (2 minor test-coverage notes deferred to final review).
+
 **Files:**
 - Create: `src/forgeloop/feedback.py`
 - Create: `tests/test_feedback.py`
 
 **Interfaces:**
 - Consumes: `ValidatorConfig`, `ValidationReport`, bounded subprocess semantics.
-- Produces: `classify_failure(argv, exit_code, stdout, stderr) -> FailureClass`, `report_fingerprint(report) -> str`, `ValidatorRunner.run_all() -> list[ValidationReport]`, `ProgressTracker.observe_action/observe_validation -> ProgressState`.
+- Produces: `classify_failure(argv, exit_code, stdout, stderr) -> FailureClass`, `report_fingerprint(report) -> str`, `ValidatorRunner(runtime: ToolRuntime, validators: list[ValidatorConfig]).run_all() -> list[ValidationReport]`, `all_validations_passed(reports) -> bool`, `ProgressTracker.observe_action/observe_validation -> ProgressState`.
 
-- [ ] **Step 1: Write failing classification tests**
+- [x] **Step 1: Write failing classification tests**
 
 ```python
 @pytest.mark.parametrize(("stderr", "expected"), [
@@ -266,11 +268,11 @@ def test_failure_classification(stderr, expected):
     assert classify_failure(["pytest"], 1, "", stderr) == expected
 ```
 
-- [ ] **Step 2: Observe red, implement reports and normalization**
+- [x] **Step 2: Observe red, implement reports and normalization**
 
 Match ordered, documented regexes. Normalize temporary absolute paths, timestamps and whitespace before hashing the last bounded output segment so equivalent failures have equal fingerprints.
 
-- [ ] **Step 3: Write failing progress tests**
+- [x] **Step 3: Write failing progress tests**
 
 ```python
 def test_repeated_failed_fingerprint_stops_progress():
@@ -282,11 +284,11 @@ def test_repeated_failed_fingerprint_stops_progress():
     assert state.reason == "no_progress"
 ```
 
-- [ ] **Step 4: Implement runner, aggregate pass state, and tracker**
+- [x] **Step 4: Implement runner, aggregate pass state, and tracker**
 
-Run validators in configuration order. Overall validation passes only if every report passes. Infrastructure and timeout classifications remain distinct. Track consecutive identical validation fingerprints and actions, resetting counters on a different fingerprint.
+Run validators in configuration order by sending structured `run_command` actions through the already-bounded `ToolRuntime`; do not duplicate subprocess code. `all_validations_passed` is a pure function: an empty report list is false, and a non-empty list passes only if every report passes. Infrastructure and timeout classifications remain distinct. Track consecutive identical validation fingerprints and actions, resetting counters on a different fingerprint.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `python3 -m pytest tests/test_feedback.py -q`
 Expected: classification, fingerprint and stop tests pass.

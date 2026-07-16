@@ -60,3 +60,11 @@
 - 首轮：24 focused / 76 full tests passed。
 - 评审修复：用 Popen reader threads 保证执行期内存有界；POSIX 终止整个进程组；原子覆盖保留已有 mode。5 个回归测试先红后绿。
 - 最终：29 focused / 81 full tests passed；Spec compliant；Task quality Approved。
+
+## 2026-07-17 — TASK-004
+
+- 实现者：`/root/task4_feedback`；commit `486e2e0`。
+- 接口裁决：ValidatorRunner 复用 bounded ToolRuntime；`all_validations_passed` 为纯函数，空验证集 false。
+- RED/GREEN：分类、指纹、进展、真实子进程验证器共 14 focused；全套 95 passed。
+- 双重评审：Spec compliant；Task quality Approved。
+- Minor 账本：缺少 bounded-tail 和不同验证 fingerprint 重置的直接回归测试；实现已正确，交最终评审决定是否补齐。
