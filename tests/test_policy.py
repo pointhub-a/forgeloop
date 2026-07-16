@@ -45,7 +45,7 @@ def test_dangerous_commands_require_approval(tmp_path, argv):
     ("argv", "rule_id"),
     [
         (["git", "-C", "repo", "reset", "--hard"], "git.hard_reset"),
-        (["git", "-c", "x=y", "push", "--force"], "git.force_push"),
+        (["git", "-C", "repo", "push", "--force"], "git.force_push"),
     ],
 )
 def test_git_global_options_cannot_bypass_dangerous_command_rules(
@@ -62,11 +62,13 @@ def test_git_global_options_cannot_bypass_dangerous_command_rules(
 @pytest.mark.parametrize(
     "argv",
     [
-        ["git", "-c", "alias.x=reset", "x", "--hard"],
-        ["git", "-calias.x=reset", "x", "--hard"],
+        ["git", "-c", "x=y", "push", "--force"],
+        ["git", "-cx=y", "push", "--force"],
+        ["git", "--config-env", "x=ENV_NAME", "status"],
+        ["git", "--config-env=x=ENV_NAME", "status"],
     ],
 )
-def test_action_supplied_git_aliases_are_denied(tmp_path, argv):
+def test_action_supplied_git_config_options_are_denied(tmp_path, argv):
     decision = PolicyEngine().evaluate(
         Action(kind="run_command", arguments={"argv": argv}), tmp_path
     )

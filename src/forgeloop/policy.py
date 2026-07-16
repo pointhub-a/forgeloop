@@ -12,16 +12,14 @@ from forgeloop.models import Action, GovernanceDecision
 
 _PATH_ACTIONS = {"read_file", "write_file", "replace_text"}
 _SHELL_METACHARACTERS = (";", "&", "|", ">", "<", "(", ")", "`", "\n", "\r")
+_DISALLOWED_GIT_CONFIG_PREFIXES = ("-c", "--config-env=")
 _GIT_GLOBAL_OPTIONS_WITH_VALUE = {
     "-C",
-    "-c",
-    "--config-env",
     "--git-dir",
     "--namespace",
     "--work-tree",
 }
 _GIT_GLOBAL_OPTIONS_WITH_INLINE_VALUE = (
-    "--config-env=",
     "--exec-path=",
     "--git-dir=",
     "--namespace=",
@@ -70,11 +68,6 @@ def action_fingerprint(action: Action) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _defines_git_alias(config_assignment: str) -> bool:
-    config_name = config_assignment.partition("=")[0]
-    return config_name.casefold().startswith("alias.")
-
-
 def _parse_git_subcommand(argv: list[str]) -> tuple[str, list[str]] | None:
     index = 1
     while index < len(argv):
@@ -82,10 +75,12 @@ def _parse_git_subcommand(argv: list[str]) -> tuple[str, list[str]] | None:
         if argument == "--":
             index += 1
             break
+        if argument == "--config-env" or argument.startswith(
+            _DISALLOWED_GIT_CONFIG_PREFIXES
+        ):
+            return None
         if argument in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
             if index + 1 >= len(argv):
-                return None
-            if argument == "-c" and _defines_git_alias(argv[index + 1]):
                 return None
             index += 2
             continue
@@ -160,7 +155,7 @@ class PolicyEngine:
                     return GovernanceDecision(
                         effect="deny",
                         rule_id="command.invalid_argv",
-                        reason="The Git command has invalid global options.",
+                        reason="The Git command has invalid or disallowed global options.",
                         fingerprint=fingerprint,
                     )
 
