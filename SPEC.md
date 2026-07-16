@@ -1,7 +1,7 @@
 # ForgeLoop Coding Agent Harness — 产品与系统规约
 
-版本：0.1.0  
-日期：2026-07-17  
+版本：0.1.0
+日期：2026-07-17
 状态：设计已批准；冷启动验证作为实现前独立门禁执行
 
 ## 1. 问题陈述
@@ -106,10 +106,10 @@ Coding 领域拥有测试、lint 和类型检查等客观信号，能在移除�
 
 ### 5.1 Agent Core
 
-输入：任务描述、工作区、Harness 配置、Provider。  
-行为：创建任务和初始上下文；逐步调用 Provider；解析单一动作；经过治理后分发；将结果或反馈追加到上下文；检查停止条件。  
-输出：最终任务状态、摘要及完整事件轨迹。  
-边界：一次只执行一个动作；默认最多 20 步；Provider 异常转为结构化错误。  
+输入：任务描述、工作区、Harness 配置、Provider。
+行为：创建任务和初始上下文；逐步调用 Provider；解析单一动作；经过治理后分发；将结果或反馈追加到上下文；检查停止条件。
+输出：最终任务状态、摘要及完整事件轨迹。
+边界：一次只执行一个动作；默认最多 20 步；Provider 异常转为结构化错误。
 错误处理：非法响应可以重试，连续达到配置阈值后以 `failed` 停止。
 
 状态机：
@@ -130,35 +130,56 @@ running -> succeeded | failed | budget_exhausted | no_progress | cancelled
 
 ### 5.3 Tool Runtime
 
-输入：已通过治理的结构化动作。  
-输出：`ToolResult(ok, output, error, metadata)`。  
-边界：输出、文件大小、运行时间均有限制；子进程工作目录固定为工作区；环境变量使用精简白名单。  
+输入：已通过治理的结构化动作。
+输出：`ToolResult(ok, output, error, metadata)`。
+边界：输出、文件大小、运行时间均有限制；子进程工作目录固定为工作区；环境变量使用精简白名单。
 错误处理：文件不存在、替换目标不唯一、超时和非零退出码均转为结构化结果，而非抛出到主循环。
 
 ### 5.4 Feedback Engine
 
-输入：一个或多个验证器结果。  
-输出：统一报告、失败分类、失败指纹和进展判断。  
-边界：分类只依赖退出码、命令和输出模式，不调用 LLM。  
+输入：一个或多个验证器结果。
+输出：统一报告、失败分类、失败指纹和进展判断。
+边界：分类只依赖退出码、命令和输出模式，不调用 LLM。
 错误处理：验证器未安装归为 `infrastructure`，不冒充代码失败。
 
 ### 5.5 Policy Engine 与 HITL
 
-输入：动作、工作区和策略配置。  
-输出：治理决策、匹配规则和可读原因。  
-边界：路径越界恒为 `deny`；只对动作指纹完全匹配的审批生效。  
+输入：动作、工作区和策略配置。
+输出：治理决策、匹配规则和可读原因。
+边界：路径越界恒为 `deny`；只对动作指纹完全匹配的审批生效。
 错误处理：规则解析失败时 fail closed；审批超时保持等待状态。
 
 ### 5.6 Memory Store
 
-输入：项目标识、键值、标签或检索条件。  
-输出：受预算限制的记忆列表。  
-边界：每项目隔离；键在项目内唯一；不接受疑似凭据字段。  
+输入：项目标识、键值、标签或检索条件。
+输出：受预算限制的记忆列表。
+边界：每项目隔离；键在项目内唯一；不接受疑似凭据字段。
 错误处理：数据库错误不会使 Agent 获得额外权限，并形成可观察事件。
 
 ### 5.7 配置
 
-使用 TOML，配置：工作区根、最大步骤、超时、输出上限、允许可执行程序、危险规则、验证命令、记忆预算和 Provider 端点。API Key 不得出现在 TOML 中。
+使用 TOML。`HarnessConfig` 的字段、类型和默认值固定如下：
+
+| 字段 | 类型 | 默认值 |
+|---|---|---|
+| `max_steps` | 正整数 | `20` |
+| `max_validation_runs` | 正整数 | `8` |
+| `wall_time_seconds` | 正整数 | `900` |
+| `command_timeout_seconds` | 1–120 的整数 | `60` |
+| `provider_timeout_seconds` | 1–120 的整数 | `60` |
+| `max_output_bytes` | 正整数 | `32768` |
+| `max_file_bytes` | 正整数 | `1048576` |
+| `max_identical_failures` | 大于 1 的整数 | `2` |
+| `max_identical_actions` | 大于 1 的整数 | `3` |
+| `memory_recall_limit` | 正整数 | `10` |
+| `memory_char_budget` | 正整数 | `4096` |
+| `allowed_executables` | 非空字符串列表 | `python3, pytest, ruff, mypy, git` |
+| `approval_rule_ids` | 字符串列表 | `command.recursive_delete, git.force_push, git.hard_reset, database.drop, privilege.escalation, permission.change, network.execute` |
+| `validators` | `ValidatorConfig` 列表 | 空列表 |
+| `provider_base_url` | HTTPS URL | `https://api.openai.com/v1/chat/completions` |
+| `provider_model` | 非空字符串 | `gpt-4.1-mini` |
+
+`ValidatorConfig` 只包含 `argv: list[str]` 和 `timeout_seconds: 1–120 的整数（默认 60）`。工作区是每个 Task 的必填输入，而不是全局配置，避免一个服务只能操作单一仓库。API Key 不得出现在 TOML 中。
 
 启动时完成 schema 校验；未知字段和非法值导致清晰错误。
 
@@ -198,7 +219,7 @@ API 最低集合：创建任务、读取任务、推进任务、批准/拒绝动
 
 ### 6.3 可用性
 
-- `make dev` 本地启动，`make test` 一键测试。
+- `make dev` 本地启动，`make test` 一键测试；裸机命令统一使用 `python3`，不假设存在 `python` 别名。
 - 首次启动向导说明工作区、Provider 和安全录入方式。
 - 错误信息包含问题、影响和下一步操作。
 

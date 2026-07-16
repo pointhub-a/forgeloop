@@ -10,6 +10,8 @@
 
 ## Global Constraints
 
+- `SPEC.md` is approved; implementation agents start at their assigned task and must not restart brainstorming.
+- Native commands use `python3`; do not assume the host defines a `python` alias.
 - Implement the complete agent loop in repository code; never use LangChain AgentExecutor, AutoGen, CrewAI, LlamaIndex Agent, or a coding-agent runner.
 - All core mechanisms must run offline under `ScriptedProvider`; `make test` must not require network access or an API key.
 - Execute subprocesses with `shell=False`, a fixed workspace, a minimal environment, bounded output, and bounded time.
@@ -81,7 +83,7 @@ def test_validation_report_is_serializable():
 
 - [ ] **Step 2: Run model tests and observe red**
 
-Run: `python -m pytest tests/test_models.py -q`  
+Run: `python3 -m pytest tests/test_models.py -q`
 Expected: collection fails because `forgeloop.models` does not exist.
 
 - [ ] **Step 3: Implement strict domain models**
@@ -100,22 +102,22 @@ def test_load_config_rejects_unknown_field(tmp_path):
 def test_default_config_has_bounded_budgets():
     cfg = HarnessConfig()
     assert cfg.max_steps == 20
-    assert cfg.command_timeout_seconds <= 120
+    assert cfg.command_timeout_seconds == 60
     assert cfg.max_output_bytes == 32768
 ```
 
 - [ ] **Step 5: Implement TOML schema and loader**
 
-Use `tomllib`; define `ValidatorConfig(argv: list[str], timeout_seconds: int)` and `HarnessConfig` fields copied from SPEC. Reject unknown fields and invalid non-positive limits with a `ConfigError` that includes the field path.
+Use `tomllib`; define `ValidatorConfig(argv: list[str], timeout_seconds: int = 60)`. Define every `HarnessConfig` field with the exact type and default from SPEC §5.7: `max_steps=20`, `max_validation_runs=8`, `wall_time_seconds=900`, `command_timeout_seconds=60`, `provider_timeout_seconds=60`, `max_output_bytes=32768`, `max_file_bytes=1048576`, `max_identical_failures=2`, `max_identical_actions=3`, `memory_recall_limit=10`, `memory_char_budget=4096`, the five allowed executables, the seven approval rule IDs, empty validators, the HTTPS provider URL, and model `gpt-4.1-mini`. Reject unknown fields and invalid limits with a `ConfigError` that includes the field path.
 
 - [ ] **Step 6: Add packaging and one-command tests**
 
-Declare runtime dependencies and `forgeloop = "forgeloop.cli:main"`; configure pytest with `pythonpath = ["src"]`; make `make test` run `python -m pytest -q` and `make dev` run `python -m forgeloop.cli serve`.
+Declare runtime dependencies and `forgeloop = "forgeloop.cli:main"`; configure pytest with `pythonpath = ["src"]`; make `make test` run `python3 -m pytest -q` and `make dev` run `python3 -m forgeloop.cli serve`.
 
 - [ ] **Step 7: Verify and commit**
 
-Run: `make test`  
-Expected: model and config tests pass.  
+Run: `make test`
+Expected: model and config tests pass.
 Commit: `feat: define strict harness domain and configuration [agent: delegated-worker]`.
 
 ---
@@ -175,8 +177,8 @@ Evaluate structural denials first, executable allowlist second, destructive sign
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `python -m pytest tests/test_policy.py -q`  
-Expected: all policy cases pass.  
+Run: `python3 -m pytest tests/test_policy.py -q`
+Expected: all policy cases pass.
 Commit: `feat: enforce deterministic workspace and command policy [agent: delegated-worker]`.
 
 ---
@@ -230,8 +232,8 @@ Call `subprocess.run(argv, cwd=workspace, shell=False, capture_output=True, text
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `python -m pytest tests/test_tools.py -q`  
-Expected: all tool tests pass without network.  
+Run: `python3 -m pytest tests/test_tools.py -q`
+Expected: all tool tests pass without network.
 Commit: `feat: add bounded workspace tool runtime [agent: delegated-worker]`.
 
 ---
@@ -280,8 +282,8 @@ Run validators in configuration order. Overall validation passes only if every r
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `python -m pytest tests/test_feedback.py -q`  
-Expected: classification, fingerprint and stop tests pass.  
+Run: `python3 -m pytest tests/test_feedback.py -q`
+Expected: classification, fingerprint and stop tests pass.
 Commit: `feat: add objective feedback and no-progress detection [agent: delegated-worker]`.
 
 ---
@@ -337,8 +339,8 @@ Implement `KeyringBackend` using the `keyring` library, `SecretFileBackend` requ
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `python -m pytest tests/test_memory.py tests/test_credentials.py -q`  
-Expected: persistence, isolation, budget and redaction tests pass.  
+Run: `python3 -m pytest tests/test_memory.py tests/test_credentials.py -q`
+Expected: persistence, isolation, budget and redaction tests pass.
 Commit: `feat: persist scoped memory and secure credentials [agent: delegated-worker]`.
 
 ---
@@ -411,8 +413,8 @@ Verify `remember`/`recall` never bypass policy or context budget. Approval accep
 
 - [ ] **Step 7: Verify and commit**
 
-Run: `python -m pytest tests/test_providers.py tests/test_loop.py -q`  
-Expected: all deterministic loop states pass without network.  
+Run: `python3 -m pytest tests/test_providers.py tests/test_loop.py -q`
+Expected: all deterministic loop states pass without network.
 Commit: `feat: implement provider abstraction and agent loop [agent: delegated-worker]`.
 
 ---
@@ -464,8 +466,8 @@ Persist every task state change and event before returning. Reconstruct the loop
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `python -m pytest tests/test_repository.py tests/test_service.py -q`  
-Expected: reopen, transitions, approval replay and cancellation tests pass.  
+Run: `python3 -m pytest tests/test_repository.py tests/test_service.py -q`
+Expected: reopen, transitions, approval replay and cancellation tests pass.
 Commit: `feat: persist tasks events and approvals [agent: delegated-worker]`.
 
 ---
@@ -527,8 +529,8 @@ Create typed request/response schemas. JSON API uses same-origin checks; HTML fo
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `python -m pytest tests/test_web.py -q`  
-Expected: page, API, approval, CSRF, health and disclosure tests pass.  
+Run: `python3 -m pytest tests/test_web.py -q`
+Expected: page, API, approval, CSRF, health and disclosure tests pass.
 Commit: `feat: add observable local WebUI and API [agent: delegated-worker]`.
 
 ---
@@ -582,8 +584,8 @@ def test_credentials_set_uses_hidden_input(monkeypatch, fake_backend):
 
 - [ ] **Step 5: Verify and commit**
 
-Run: `python -m pytest tests/test_demo.py tests/test_cli.py -q` and `python scripts/mechanism_demo.py --json`  
-Expected: tests pass and JSON proves all three course behaviors.  
+Run: `python3 -m pytest tests/test_demo.py tests/test_cli.py -q` and `python3 scripts/mechanism_demo.py --json`
+Expected: tests pass and JSON proves all three course behaviors.
 Commit: `feat: add deterministic mechanism demo and CLI [agent: delegated-worker]`.
 
 ---
@@ -612,7 +614,7 @@ Add `tests/test_distribution.py` asserting the example TOML loads, package metad
 
 - [ ] **Step 2: Observe red and add distribution files**
 
-Use `python:3.12-slim`; create an unprivileged `forgeloop` user; install the wheel; set read-only source layers; mount `/workspace`, `/data`, and `/run/secrets`; expose 8000; healthcheck `/healthz`. GitLab stages run `python -m pytest -q` in job exactly named `unit-test`, then build the image in `container-build`.
+Use `python:3.12-slim`; create an unprivileged `forgeloop` user; install the wheel; set read-only source layers; mount `/workspace`, `/data`, and `/run/secrets`; expose 8000; healthcheck `/healthz`. GitLab stages run `python3 -m pytest -q` in job exactly named `unit-test`, then build the image in `container-build`.
 
 - [ ] **Step 3: Write complete README and example configuration**
 
@@ -624,17 +626,17 @@ Update AGENT_LOG with each red/green result, subagent identifier, review outcome
 
 - [ ] **Step 5: Run the full local quality gate**
 
-Run: `make test`  
-Expected: all tests pass offline.  
-Run: `python scripts/mechanism_demo.py --json`  
-Expected: required evidence fields show approval, failed validation, feedback, changed action, success and no progress.  
-Run: `python -m build`  
+Run: `make test`
+Expected: all tests pass offline.
+Run: `python3 scripts/mechanism_demo.py --json`
+Expected: required evidence fields show approval, failed validation, feedback, changed action, success and no progress.
+Run: `python3 -m build`
 Expected: wheel and source distribution created.
 
 - [ ] **Step 6: Build and smoke-test the container**
 
-Run: `docker build -t forgeloop:local .`  
-Expected: image builds successfully.  
+Run: `docker build -t forgeloop:local .`
+Expected: image builds successfully.
 Run the image with a temporary data mount and query `/healthz`; expect HTTP 200 without an API key.
 
 - [ ] **Step 7: Secret and placeholder audit**
@@ -643,8 +645,8 @@ Run repository searches for token-shaped strings, `.env`, absolute developer pat
 
 - [ ] **Step 8: Final reviews and commit**
 
-Perform spec-compliance review, then code-quality/security review. Resolve all Critical and Important findings.  
-Commit: `docs: complete ForgeLoop delivery and verification [agent: delegated-worker]`.  
+Perform spec-compliance review, then code-quality/security review. Resolve all Critical and Important findings.
+Commit: `docs: complete ForgeLoop delivery and verification [agent: delegated-worker]`.
 Update each completed PLAN task with its commit hash.
 
 ## Plan Self-Review
