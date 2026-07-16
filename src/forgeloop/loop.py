@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 import sqlite3
@@ -51,6 +52,17 @@ class LoopState:
     used_approvals: set[str] = field(default_factory=set)
     summary: str = ""
     tool_calls: list[Action] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class LoopCheckpoint:
+    """Restorable approval-resolution state for one live loop."""
+
+    state: LoopState
+    pending_action_snapshot: str | None
+    pending_fingerprint: str | None
+    pending_rule_id: str | None
+    pending_no_progress: bool
 
 
 class AgentLoop:
@@ -208,6 +220,27 @@ class AgentLoop:
             self.step()
         return state
 
+    def checkpoint(self) -> LoopCheckpoint:
+        """Capture a deep, restorable copy of live approval state."""
+
+        return LoopCheckpoint(
+            state=deepcopy(self._require_state()),
+            pending_action_snapshot=self._pending_action_snapshot,
+            pending_fingerprint=self._pending_fingerprint,
+            pending_rule_id=self._pending_rule_id,
+            pending_no_progress=self._pending_no_progress,
+        )
+
+    def restore(self, checkpoint: LoopCheckpoint) -> LoopState:
+        """Restore a previously captured live-loop checkpoint."""
+
+        self.state = deepcopy(checkpoint.state)
+        self._pending_action_snapshot = checkpoint.pending_action_snapshot
+        self._pending_fingerprint = checkpoint.pending_fingerprint
+        self._pending_rule_id = checkpoint.pending_rule_id
+        self._pending_no_progress = checkpoint.pending_no_progress
+        return self.state
+
     def cancel(self) -> LoopState:
         state = self._require_state()
         if state.status is TaskStatus.CANCELLED:
@@ -223,7 +256,9 @@ class AgentLoop:
         )
         return state
 
-    def resolve_approval(self, fingerprint: str, approved: bool) -> LoopState:
+    def validate_pending_approval(self, fingerprint: str) -> Action:
+        """Return the canonical pending action after complete side-effect-free checks."""
+
         state = self._require_state()
         if (
             state.status is not TaskStatus.WAITING_APPROVAL
@@ -247,6 +282,11 @@ class AgentLoop:
             or current_decision.rule_id != self._pending_rule_id
         ):
             raise ApprovalMismatch("pending action no longer has the same policy decision")
+        return action
+
+    def resolve_approval(self, fingerprint: str, approved: bool) -> LoopState:
+        state = self._require_state()
+        action = self.validate_pending_approval(fingerprint)
 
         no_progress = self._pending_no_progress
         state.used_approvals.add(fingerprint)

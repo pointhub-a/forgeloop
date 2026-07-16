@@ -38,6 +38,7 @@ class TaskService:
         self.loop_factory = loop_factory
         self._loops: dict[str, AgentLoop] = {}
         self._synced_event_counts: dict[str, int] = {}
+        self._pending_finalizations: dict[str, str] = {}
         self._task_locks: dict[str, RLock] = {}
         self._task_locks_guard = Lock()
 
@@ -60,21 +61,30 @@ class TaskService:
         with self._task_lock(task_id):
             loop = self._require_loop(task_id)
             fingerprint = self._pending_fingerprint(loop)
-            loop.resolve_approval(fingerprint, approved=False)
-            return self._sync(
-                task_id,
-                loop,
-                approval=ApprovalDecision(fingerprint, "rejected"),
-                final_event_data={"reason": reason},
-            )
+            checkpoint = loop.checkpoint()
+            try:
+                loop.resolve_approval(fingerprint, approved=False)
+                return self._sync(
+                    task_id,
+                    loop,
+                    approval=ApprovalDecision(fingerprint, "rejected"),
+                    rejection_event_data={"reason": reason},
+                )
+            except Exception:
+                loop.restore(checkpoint)
+                raise
 
     def approve(self, task_id: str, fingerprint: str) -> TaskRecord:
         with self._task_lock(task_id):
             loop = self._require_loop(task_id)
-            if self._pending_fingerprint(loop) != fingerprint:
-                raise ApprovalMismatch(
-                    "approval fingerprint does not match pending action"
-                )
+            pending_finalization = self._pending_finalizations.get(task_id)
+            if pending_finalization is not None:
+                if pending_finalization != fingerprint:
+                    raise ApprovalMismatch(
+                        "approval fingerprint does not match pending finalization"
+                    )
+                return self._finalize_approval(task_id, loop, fingerprint)
+            loop.validate_pending_approval(fingerprint)
             persisted = self.repository.get(task_id)
             self.repository.commit_transition(
                 persisted,
@@ -92,7 +102,8 @@ class TaskService:
                 approval=ApprovalDecision(fingerprint, "approved"),
             )
             loop.resolve_approval(fingerprint, approved=True)
-            return self._sync(task_id, loop)
+            self._pending_finalizations[task_id] = fingerprint
+            return self._finalize_approval(task_id, loop, fingerprint)
 
     def cancel(self, task_id: str) -> TaskRecord:
         with self._task_lock(task_id):
@@ -103,6 +114,14 @@ class TaskService:
     def _task_lock(self, task_id: str) -> RLock:
         with self._task_locks_guard:
             return self._task_locks.setdefault(task_id, RLock())
+
+    def _finalize_approval(
+        self, task_id: str, loop: AgentLoop, fingerprint: str
+    ) -> TaskRecord:
+        task = self._sync(task_id, loop)
+        if self._pending_finalizations.get(task_id) == fingerprint:
+            del self._pending_finalizations[task_id]
+        return task
 
     @staticmethod
     def _pending_fingerprint(loop: AgentLoop) -> str:
@@ -124,7 +143,7 @@ class TaskService:
         loop: AgentLoop,
         *,
         approval: ApprovalDecision | None = None,
-        final_event_data: dict[str, object] | None = None,
+        rejection_event_data: dict[str, object] | None = None,
     ) -> TaskRecord:
         state = loop.state
         if state is None:
@@ -143,13 +162,21 @@ class TaskService:
         )
         synced_count = self._synced_event_counts[task_id]
         pending_events = list(state.events[synced_count:])
-        if final_event_data and pending_events:
-            final_event = pending_events[-1]
-            pending_events[-1] = LoopEvent(
-                kind=final_event.kind,
-                summary=final_event.summary,
-                data={**final_event.data, **final_event_data},
-            )
+        if rejection_event_data:
+            for index in range(len(pending_events) - 1, -1, -1):
+                event = pending_events[index]
+                if (
+                    event.kind == EventKind.APPROVAL
+                    and event.data.get("approved") is False
+                ):
+                    pending_events[index] = LoopEvent(
+                        kind=event.kind,
+                        summary=event.summary,
+                        data={**event.data, **rejection_event_data},
+                    )
+                    break
+            else:
+                raise RuntimeError("pending rejection approval event was not found")
         self.repository.commit_transition(
             task, pending_events, approval=approval
         )

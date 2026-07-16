@@ -322,6 +322,7 @@ def test_rejection_audit_failure_rolls_back_approval_projection_and_events(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     pending = service.advance(service.create("clean", workspace).id)
+    loop = service._loops[pending.id]
     events_before = tasks.list_events(pending.id)
     with sqlite3.connect(tasks.db_path) as connection:
         connection.execute(
@@ -343,6 +344,16 @@ def test_rejection_audit_failure_rolls_back_approval_projection_and_events(
     assert tasks.get(pending.id) == pending
     assert tasks.list_events(pending.id) == events_before
     assert approvals.list_for_task(pending.id) == []
+    assert loop.state.status == "waiting_approval"
+    assert loop.state.pending_action is not None
+
+    with sqlite3.connect(tasks.db_path) as connection:
+        connection.execute("DROP TRIGGER fail_rejection_audit")
+    retried = service.reject(pending.id, reason="not allowed")
+
+    assert retried.status == "running"
+    assert retried.pending_action is None
+    assert len(approvals.list_for_task(pending.id)) == 1
 
 
 def test_same_task_advances_are_serialized_through_provider_and_persistence(
@@ -396,3 +407,143 @@ def test_same_task_advances_are_serialized_through_provider_and_persistence(
     assert all(result.step_count in {1, 2} for result in results)
     assert [event.sequence for event in events] == list(range(1, len(events) + 1))
     assert len(events) == 9
+
+
+def test_full_pending_validation_happens_before_approval_intent(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+    created = {}
+
+    def factory(workspace: Path, task_id: str):
+        config = HarnessConfig(max_steps=10)
+        loop = AgentLoop(
+            provider=ScriptedProvider(
+                [action("run_command", argv=["rm", "-rf", "build"])]
+            ),
+            policy=PolicyEngine(config),
+            tools=ToolRuntime(workspace, config),
+            validators=NoValidators(),
+            progress=ProgressTracker(
+                max_identical_failures=config.max_identical_failures,
+                max_identical_actions=config.max_identical_actions,
+            ),
+            memory=MemoryStore(":memory:"),
+            config=config,
+            project_id=task_id,
+        )
+        created.update(config=config, loop=loop)
+        return loop
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = TaskService(tasks, approvals, factory)
+    pending = service.advance(service.create("clean", workspace).id)
+    fingerprint = action_fingerprint(pending.pending_action)
+    events_before = tasks.list_events(pending.id)
+    created["config"].approval_rule_ids = []
+
+    with pytest.raises(
+        ApprovalMismatch, match="pending action no longer has the same policy decision"
+    ):
+        service.approve(pending.id, fingerprint)
+
+    assert created["loop"].state.status == "waiting_approval"
+    assert tasks.get(pending.id) == pending
+    assert tasks.list_events(pending.id) == events_before
+    assert approvals.list_for_task(pending.id) == []
+
+
+def test_approval_final_sync_failure_retries_without_reexecuting_tool_or_intent(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+    factory, _ = loop_factory_for(
+        [action("run_command", argv=["rm", "-rf", "build"])]
+    )
+    service = TaskService(tasks, approvals, factory)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "build").mkdir()
+    pending = service.advance(service.create("clean", workspace).id)
+    fingerprint = action_fingerprint(pending.pending_action)
+    events_before = tasks.list_events(pending.id)
+    with sqlite3.connect(tasks.db_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_approval_final_sync
+            BEFORE INSERT ON events
+            WHEN NEW.summary = 'Pending action approved.'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced approval final sync failure');
+            END
+            """
+        )
+
+    with pytest.raises(
+        sqlite3.IntegrityError, match="forced approval final sync failure"
+    ):
+        service.approve(pending.id, fingerprint)
+
+    assert not (workspace / "build").exists()
+    assert tasks.get(pending.id) == pending
+    intent_events = tasks.list_events(pending.id)
+    assert intent_events[: len(events_before)] == events_before
+    assert [event.data.get("phase") for event in intent_events].count("intent") == 1
+    assert len(approvals.list_for_task(pending.id)) == 1
+
+    with sqlite3.connect(tasks.db_path) as connection:
+        connection.execute("DROP TRIGGER fail_approval_final_sync")
+    (workspace / "build").mkdir()
+
+    finalized = service.approve(pending.id, fingerprint)
+
+    assert finalized.status == "running"
+    assert finalized.pending_action is None
+    assert (workspace / "build").is_dir()
+    events = tasks.list_events(pending.id)
+    assert [event.data.get("phase") for event in events].count("intent") == 1
+    assert len(approvals.list_for_task(pending.id)) == 1
+
+
+def test_rejection_reason_is_attached_to_approval_when_state_event_follows(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+
+    def factory(workspace: Path, task_id: str):
+        config = HarnessConfig(max_steps=1)
+        return AgentLoop(
+            provider=ScriptedProvider(
+                [action("run_command", argv=["rm", "-rf", "build"])]
+            ),
+            policy=PolicyEngine(config),
+            tools=ToolRuntime(workspace, config),
+            validators=NoValidators(),
+            progress=ProgressTracker(
+                max_identical_failures=config.max_identical_failures,
+                max_identical_actions=config.max_identical_actions,
+            ),
+            memory=MemoryStore(":memory:"),
+            config=config,
+            project_id=task_id,
+        )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = TaskService(tasks, approvals, factory)
+    pending = service.advance(service.create("clean", workspace).id)
+    event_count = len(tasks.list_events(pending.id))
+
+    rejected = service.reject(pending.id, reason="operator denied")
+
+    assert rejected.status == "budget_exhausted"
+    new_events = tasks.list_events(pending.id)[event_count:]
+    rejection = next(
+        event
+        for event in new_events
+        if event.kind.value == "approval" and event.data.get("approved") is False
+    )
+    assert rejection.data["reason"] == "operator denied"
+    assert new_events[-1].kind.value == "state"
+    assert new_events[-1].data["reason"] == "steps"

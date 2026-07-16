@@ -174,3 +174,64 @@ complete deterministic Provider test double only where provider overlap must be
 observed. No test-only production methods or fabricated restart recovery were
 added. The controller-owned `PLAN.md` modification remains outside the Task 7
 staging set. No unresolved concern remains.
+
+---
+
+## Second external review remediation
+
+The follow-up review found four approval-lifecycle gaps. Each was repaired in a
+focused RED/GREEN cycle.
+
+1. Complete validation before durable intent
+   - RED: after the live policy stopped requiring the pending approval, service
+     still persisted an approved intent and only then failed inside
+     `resolve_approval`.
+   - GREEN: `AgentLoop.validate_pending_approval(fingerprint) -> Action`
+     performs the complete side-effect-free canonical snapshot, fingerprint,
+     consumption, policy, and rule checks. `resolve_approval` reuses it, and
+     service calls it before writing intent; invalidated policy leaves no intent,
+     approval row, task change, or event.
+2. Rejection rollback restores the live loop
+   - RED: a trigger-rolled-back rejection left SQLite waiting but the in-process
+     loop running, so rejection could not be retried.
+   - GREEN: `AgentLoop.checkpoint/restore` deep-copy `LoopState` and preserve the
+     four private pending fields. Service checkpoints before rejection and
+     restores on transaction failure; after removing the trigger, the same live
+     task rejects successfully once.
+3. Idempotent approval finalization
+   - RED: after intent persisted and the tool executed, an injected final-event
+     failure left the tool result unsynced; retrying the same fingerprint raised
+     mismatch instead of finishing persistence.
+   - GREEN: service tracks in-process task-to-fingerprint pending finalization.
+     The same fingerprint retries only `_sync`, never the intent or tool, and
+     clears the marker after success. The regression recreates the command
+     target before retry and proves it remains untouched, with one intent and
+     one approval row.
+4. Rejection reason targets the rejection event
+   - RED: with `max_steps=1`, rejection emitted an approval event followed by a
+     budget state event; the old final-event merge omitted reason from approval
+     and overwrote the state's `reason=steps`.
+   - GREEN: `_sync` searches the current pending events in reverse for the
+     `EventKind.APPROVAL` rejection event and enriches only it. The following
+     state event retains its stop reason.
+
+Post-remediation focused verification:
+
+```text
+.venv/bin/python -m pytest tests/test_loop.py tests/test_repository.py tests/test_service.py -q
+......................................................                   [100%]
+54 passed in 0.34s
+```
+
+Full regression verification:
+
+```text
+.venv/bin/python -m pytest -q
+........................................................................ [ 37%]
+........................................................................ [ 74%]
+.................................................                        [100%]
+193 passed in 5.74s
+```
+
+`git diff --check` passed. The controller-owned `PLAN.md` remains unstaged.
+No unresolved concern remains.
