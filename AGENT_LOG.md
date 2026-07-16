@@ -44,3 +44,11 @@
 - 环境干预：系统 Python 为 3.9；主控定位 Codex 内置 Python 3.12.13 并要求使用 worktree `.venv`，未降低产品版本要求。
 - 双重评审：Spec compliant；Task quality Approved；无 Critical/Important/Minor。
 - 主控复核：枚举成员与 SPEC 状态机一致；Provider URL 与 SPEC §5.7 一致。
+
+## 2026-07-17 — TASK-002
+
+- 实现者：`/root/task2_policy`；首个 commit `15106fb`，三轮安全修复至 `fab93b8`。
+- RED/GREEN：路径围栏、危险命令、元字符、指纹和 Git 参数共 22 个策略测试；全套 52 passed。
+- 规约澄清：危险签名必须先于普通 allowlist，否则 `rm -rf` 无法进入 HITL。
+- 评审修复：补齐 `&`/括号/换行；解析 Git global options；最终对 `git -c` 与 `--config-env` 动态配置全部 fail-closed deny，阻断别名绕过。
+- 最终双重评审：Spec compliant；Task quality Approved；无遗留问题。

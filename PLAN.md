@@ -126,6 +126,8 @@ Commit: `feat: define strict harness domain and configuration [agent: delegated-
 
 ### Task 2: Deterministic Governance and Workspace Boundary
 
+**Status:** Complete — commits `15106fb`, `d4bfac1`, `b84b962`, `fab93b8`; spec compliance ✅; task quality approved.
+
 **Files:**
 - Create: `src/forgeloop/policy.py`
 - Create: `tests/test_policy.py`
@@ -134,7 +136,7 @@ Commit: `feat: define strict harness domain and configuration [agent: delegated-
 - Consumes: `Action`, `GovernanceDecision`, `HarnessConfig` from Task 1.
 - Produces: `PolicyEngine.evaluate(action: Action, workspace: Path) -> GovernanceDecision`, `resolve_workspace_path(workspace: Path, requested: str) -> Path`, `action_fingerprint(action: Action) -> str`.
 
-- [ ] **Step 1: Write failing path-boundary tests**
+- [x] **Step 1: Write failing path-boundary tests**
 
 ```python
 def test_parent_escape_is_denied(tmp_path):
@@ -154,11 +156,11 @@ def test_symlink_escape_is_denied(tmp_path):
     assert decision.effect == "deny"
 ```
 
-- [ ] **Step 2: Observe red, then implement canonical boundary checks**
+- [x] **Step 2: Observe red, then implement canonical boundary checks**
 
 Run the two tests and confirm import failure. Resolve workspace and candidate with `Path.resolve(strict=False)`; use `candidate.is_relative_to(root)`; return fail-closed decisions rather than raising.
 
-- [ ] **Step 3: Write dangerous-command and metacharacter tests**
+- [x] **Step 3: Write dangerous-command and metacharacter tests**
 
 ```python
 @pytest.mark.parametrize("argv", [["rm", "-rf", "build"], ["git", "reset", "--hard"], ["git", "push", "--force"]])
@@ -173,11 +175,11 @@ def test_shell_metacharacters_are_denied(tmp_path):
     assert decision.effect == "deny"
 ```
 
-- [ ] **Step 4: Implement ordered policy rules and stable fingerprint**
+- [x] **Step 4: Implement ordered policy rules and stable fingerprint**
 
-Evaluate structural denials first, executable allowlist second, destructive signatures third, safe default last. Hash canonical JSON with sorted keys using SHA-256. Include `rule_id`, human reason and fingerprint in every decision.
+Evaluate structural denials first, destructive signatures second, executable allowlist third, and safe default last. A recognized dangerous command such as `rm -rf` reaches one-time approval even when the executable is not in the ordinary allowlist; an unknown non-dangerous executable is denied. Hash canonical JSON with sorted keys using SHA-256. Include `rule_id`, human reason and fingerprint in every decision.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `python3 -m pytest tests/test_policy.py -q`
 Expected: all policy cases pass.
