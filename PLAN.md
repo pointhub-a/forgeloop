@@ -298,7 +298,10 @@ Commit: `feat: add objective feedback and no-progress detection [agent: delegate
 
 ### Task 5: Persistent Memory, Credentials, and Redaction
 
+**Status:** Complete — commits `aeb374e`, `8b047e7`; spec compliance ✅; task quality ready.
+
 **Files:**
+- Modify: `pyproject.toml`
 - Create: `src/forgeloop/memory.py`
 - Create: `src/forgeloop/credentials.py`
 - Create: `tests/test_memory.py`
@@ -308,7 +311,7 @@ Commit: `feat: add objective feedback and no-progress detection [agent: delegate
 - Consumes: SQLite path and credential backend protocol.
 - Produces: `MemoryStore.upsert/recall`, `CredentialService.status/set/clear/get_for_provider`, `redact(text, secrets) -> str`.
 
-- [ ] **Step 1: Write failing memory isolation and budget tests**
+- [x] **Step 1: Write failing memory isolation and budget tests**
 
 ```python
 def test_recall_is_project_and_tag_scoped(store):
@@ -322,11 +325,11 @@ def test_recall_respects_character_budget(store):
     assert sum(len(m.value) for m in store.recall("p", ["x"], 10, 5)) <= 5
 ```
 
-- [ ] **Step 2: Implement SQLite memory and verify persistence**
+- [x] **Step 2: Implement SQLite memory and verify persistence**
 
 Create schema on initialization; use `(project_id, key)` primary key; encode sorted unique tags as JSON; order matches by tag overlap then `updated_at`; reject keys matching `secret|token|password|api[_-]?key`.
 
-- [ ] **Step 3: Write failing credential non-disclosure tests**
+- [x] **Step 3: Write failing credential non-disclosure tests**
 
 ```python
 def test_status_and_repr_never_reveal_secret(fake_backend):
@@ -341,11 +344,11 @@ def test_redact_masks_registered_and_token_shaped_values():
     assert "[REDACTED]" in text
 ```
 
-- [ ] **Step 4: Implement backend protocol and secure sources**
+- [x] **Step 4: Implement backend protocol and secure sources**
 
-Implement `KeyringBackend` using the `keyring` library, `SecretFileBackend` requiring a regular file with no group/other permission bits, and in-memory fake for tests. Never define a getter that returns a key to Web routes; only the provider composition root may call `get_for_provider`.
+Add `keyring>=25,<26` to runtime dependencies. Implement `KeyringBackend` using the `keyring` library, `SecretFileBackend` requiring a regular file with no group/other permission bits, and in-memory fake for tests. Never define a getter that returns a key to Web routes; only the provider composition root may call `get_for_provider`.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `python3 -m pytest tests/test_memory.py tests/test_credentials.py -q`
 Expected: persistence, isolation, budget and redaction tests pass.

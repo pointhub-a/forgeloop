@@ -68,3 +68,11 @@
 - RED/GREEN：分类、指纹、进展、真实子进程验证器共 14 focused；全套 95 passed。
 - 双重评审：Spec compliant；Task quality Approved。
 - Minor 账本：缺少 bounded-tail 和不同验证 fingerprint 重置的直接回归测试；实现已正确，交最终评审决定是否补齐。
+
+## 2026-07-17 — TASK-005
+
+- 实现者：`/root/task5_memory_credentials`；commits `aeb374e`、`8b047e7`。
+- RED/GREEN：真实 SQLite 记忆、fake credential facade、真实 secret-file mode，共 23 focused / 118 full 初始通过。
+- 外部评审：发现 memory value 可携 token-shaped 明文落库（Critical）及空凭据误报（Important）。
+- 修复：共享 token predicate，写 SQL 前拒绝敏感 value；直接查询 DB 证明零落盘；空白 secret 在 backend 前拒绝并统一旧值语义。
+- 最终：28 focused / 123 full；Spec PASS；Task Quality PASS—READY。
