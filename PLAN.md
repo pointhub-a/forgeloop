@@ -440,6 +440,8 @@ Commit: `feat: implement provider abstraction and agent loop [agent: delegated-w
 
 **Status:** Complete — commits `e253f94`, `568bb21`, `d21dcde`; spec compliance PASS; task quality PASS.
 
+**Status:** Complete — commits `e253f94`, `568bb21`, `d21dcde`; spec compliance PASS; task quality PASS.
+
 **Files:**
 - Create: `src/forgeloop/repository.py`
 - Create: `src/forgeloop/service.py`
@@ -496,6 +498,7 @@ Commit: `feat: persist tasks events and approvals [agent: delegated-worker]`.
 ### Task 8: Local WebUI and HTTP API
 
 **Files:**
+- Modify: `pyproject.toml`
 - Create: `src/forgeloop/web.py`
 - Create: `src/forgeloop/templates/base.html`
 - Create: `src/forgeloop/templates/index.html`
@@ -508,7 +511,9 @@ Commit: `feat: persist tasks events and approvals [agent: delegated-worker]`.
 
 **Interfaces:**
 - Consumes: `TaskService`, `CredentialService`, demo factory.
-- Produces: `create_app(dependencies: AppDependencies | None = None) -> FastAPI` and documented HTML/JSON routes.
+- Produces: `AppDependencies`, `create_app(dependencies: AppDependencies) -> FastAPI` and documented HTML/JSON routes.
+
+Add runtime dependencies `fastapi>=0.115,<1`, `uvicorn>=0.34,<1`, `jinja2>=3.1,<4`; add dev dependency `httpx>=0.28,<1` for FastAPI's TestClient. `AppDependencies(task_service, task_repository, credential_service, csrf_secret: bytes, demo_runner: Callable[[], dict[str, object]] | None)` is injected explicitly; Task 9/CLI owns default production composition. Routes never construct Providers or read keys directly.
 
 - [ ] **Step 1: Write failing smoke and disclosure tests**
 
@@ -528,7 +533,7 @@ def test_settings_never_returns_credential(client, credential_service):
 
 - [ ] **Step 2: Implement app composition, templates, and local assets**
 
-Use Jinja templates with a restrained dark/light interface, semantic HTML, visible focus states and responsive layout. Serve no CDN assets. Expose health endpoint `/healthz` returning version and database readiness.
+Use Jinja templates with a restrained ink/amber/teal engineering-console palette, system monospace for trace data, semantic HTML, visible focus states and responsive layout. The first viewport centers the concrete task form and safety boundary, not generic dashboard chrome. Serve no CDN assets or model-authored SVG. Expose health endpoint `/healthz` returning version and database readiness.
 
 - [ ] **Step 3: Write failing task and approval route tests**
 
@@ -546,7 +551,7 @@ def test_approval_requires_matching_fingerprint(client, pending_task):
 
 - [ ] **Step 4: Implement API routes and CSRF on browser forms**
 
-Create typed request/response schemas. JSON API uses same-origin checks; HTML forms use a signed session CSRF token. Return 404 for unknown tasks, 409 for invalid state transitions, 422 for bad input, and never expose traceback or secrets.
+Create typed request/response schemas. JSON API rejects a present `Origin` whose scheme/host does not match the request; HTML forms use an HMAC-signed CSRF token bound to an HttpOnly, SameSite=Strict nonce cookie. Provide routes to create/get/advance/approve/reject/cancel tasks and status/set/clear credentials; credential responses expose only configured/source. Return 404 for unknown tasks, 409 for invalid state transitions, 422 for bad input, and never expose traceback or secrets.
 
 - [ ] **Step 5: Verify and commit**
 
