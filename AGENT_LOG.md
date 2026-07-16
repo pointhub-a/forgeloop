@@ -91,3 +91,11 @@
 - 外部评审：发现 approval 可变引用绕过、stale validation（2 Critical），已消费指纹死锁、审批恢复未结算预算、memory异常逃逸（3 Important）。
 - 修复：私有 canonical action snapshot + fingerprint + policy重评；所有潜在 workspace mutation 尝试前使验证失效；used指纹反馈；统一 `_finish_step`；memory operational error脱敏。
 - 最终：41 focused / 164 full；Spec PASS；Task Quality PASS—Ready；无遗留 finding。
+
+## 2026-07-17 — TASK-007
+
+- 实现者：`/root/task7_repository_service`；commits `e253f94`、`568bb21`、`d21dcde`。
+- 初始：18 focused / 182 full；审计持久化，活跃 Loop 重启后显式 `TaskNotLoaded`。
+- 首轮评审修复：atomic `commit_transition`、工具前 durable approval intent、每任务 RLock、显式迁移版本、并发与失败注入。
+- 二轮评审修复：reject checkpoint/restore；intent 前完整无副作用审批校验；approved final sync 幂等重试且工具只执行一次；reason 定位 approval event。
+- 最终：54 focused / 193 full；Spec PASS；Task Quality PASS；Ready。

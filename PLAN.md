@@ -438,6 +438,8 @@ Commit: `feat: implement provider abstraction and agent loop [agent: delegated-w
 
 ### Task 7: SQLite Task Repository and Resumable Service
 
+**Status:** Complete — commits `e253f94`, `568bb21`, `d21dcde`; spec compliance PASS; task quality PASS.
+
 **Files:**
 - Create: `src/forgeloop/repository.py`
 - Create: `src/forgeloop/service.py`
@@ -446,9 +448,11 @@ Commit: `feat: implement provider abstraction and agent loop [agent: delegated-w
 
 **Interfaces:**
 - Consumes: `TaskRecord`, `Event`, `AgentLoop` state snapshots.
-- Produces: `TaskRepository.create/get/save/append_event/list_events`, `ApprovalRepository`, `TaskService.create/advance/approve/reject/cancel`.
+- Produces: `TaskRepository.create/get/save/append_event/list_events/commit_transition`, `ApprovalRepository.record/list_for_task`, `TaskService.create/advance/approve/reject/cancel`, `TaskNotFound`, `TaskNotLoaded`, `ApprovalMismatch`.
 
-- [ ] **Step 1: Write failing repository consistency tests**
+`TaskRepository(db_path)` and `ApprovalRepository(db_path)` share one SQLite file. `TaskService(repository, approvals, loop_factory)` accepts `loop_factory(workspace: Path, task_id: str) -> AgentLoop` and owns an in-process `task_id -> AgentLoop` map plus a per-task reentrant lock. `create(description, workspace)` first creates the repository record, then passes its normalized workspace and generated ID to the factory and starts the loop; `advance(task_id)` performs one `loop.step`; `approve/reject` call `loop.resolve_approval` with the exact pending fingerprint and persist the decision; `cancel` calls `loop.cancel`. Every mutation and persistence path is serialized per task. `commit_transition` atomically saves the Task projection and only new events in one SQLite transaction. Approval of an external side effect first durably records a unique approval intent and audit event; if that write fails the tool is never executed. Task/event/approval audit data survives server restart, but active provider/loop continuation does not: mutating a persisted active task absent from the map raises `TaskNotLoaded`. This is an explicit known limitation, not fabricated Provider-state reconstruction.
+
+- [x] **Step 1: Write failing repository consistency tests**
 
 ```python
 def test_event_sequence_is_monotonic_across_reopen(db_path):
@@ -460,11 +464,11 @@ def test_event_sequence_is_monotonic_across_reopen(db_path):
     assert event.sequence == 2
 ```
 
-- [ ] **Step 2: Implement migrations and transactional repository methods**
+- [x] **Step 2: Implement migrations and transactional repository methods**
 
-Create `schema_version`, `tasks`, `events`, and `approvals`; enable foreign keys and WAL; serialize JSON with sorted keys; allocate sequence and insert event in one immediate transaction.
+In one explicit migration transaction, validate the single authoritative schema version, create `schema_version`, `tasks`, `events`, and `approvals`, and write version `1`; reject unknown versions. Enable foreign keys and WAL; serialize JSON with sorted keys. Allocate event sequences and insert all events inside the same immediate transaction as their Task projection.
 
-- [ ] **Step 3: Write failing service state-transition tests**
+- [x] **Step 3: Write failing service state-transition tests**
 
 ```python
 def test_reject_pending_action_returns_task_to_running(service, pending_task):
@@ -477,11 +481,11 @@ def test_approval_for_wrong_fingerprint_fails_closed(service, pending_task):
         service.approve(pending_task.id, "wrong")
 ```
 
-- [ ] **Step 4: Implement service and persisted snapshots**
+- [x] **Step 4: Implement service and persisted audit state**
 
-Persist every task state change and event before returning. Reconstruct the loop from task snapshot and event context. Keep service synchronous; Web routes may call it in a worker thread for blocking execution.
+Persist every task state change and new event before returning through `commit_transition`; transaction failure rolls back both projection and all events. Convert `LoopEvent` to stored `Event` with UUIDs and monotonic per-task sequence; track the last synced event index per active task to avoid duplicates. Persist a human rejection reason as approval audit data. Keep service synchronous and serialize all work for one task with its lock; Web routes may call different tasks in worker threads. Persisted tasks remain auditable after restart, while mutation of an active-but-not-loaded task raises `TaskNotLoaded` as documented above.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `python3 -m pytest tests/test_repository.py tests/test_service.py -q`
 Expected: reopen, transitions, approval replay and cancellation tests pass.
