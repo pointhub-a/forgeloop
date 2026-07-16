@@ -22,15 +22,16 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from forgeloop.credentials import CredentialService
 from forgeloop.loop import ApprovalMismatch
-from forgeloop.models import Event, TaskRecord, TaskStatus
+from forgeloop.models import Event, TaskRecord
 from forgeloop.policy import action_fingerprint
 from forgeloop.repository import TaskNotFound, TaskRepository
-from forgeloop.service import TaskNotLoaded, TaskService
+from forgeloop.service import InvalidStateTransition, TaskNotLoaded, TaskService
 
 
 _PACKAGE_DIR = Path(__file__).parent
 _CSRF_COOKIE = "forgeloop_csrf"
 _CSRF_NONCE = re.compile(r"[A-Za-z0-9_-]{32,128}")
+_DEFAULT_ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "testserver"})
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class AppDependencies:
     csrf_secret: bytes
     demo_runner: Callable[[], dict[str, object]] | None
     provider_name: str = "demo"
+    allowed_hosts: frozenset[str] = _DEFAULT_ALLOWED_HOSTS
 
 
 class TaskCreateRequest(BaseModel):
@@ -89,23 +91,22 @@ class CredentialStatusResponse(BaseModel):
     source: str
 
 
-_TERMINAL_TASK_STATUSES = {
-    TaskStatus.DENIED,
-    TaskStatus.SUCCEEDED,
-    TaskStatus.FAILED,
-    TaskStatus.BUDGET_EXHAUSTED,
-    TaskStatus.NO_PROGRESS,
-    TaskStatus.CANCELLED,
-}
-
-
-def _normalized_origin(
-    scheme: str, hostname: str | None, port: int | None
-) -> tuple[str, str, int] | None:
-    if scheme not in {"http", "https"} or hostname is None:
+def _host_name(host: str) -> str | None:
+    try:
+        parsed = urlsplit(f"//{host}")
+        parsed.port
+    except ValueError:
         return None
-    effective_port = port if port is not None else (443 if scheme == "https" else 80)
-    return scheme, hostname.lower(), effective_port
+    if (
+        parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return parsed.hostname.lower()
 
 
 def create_app(dependencies: AppDependencies) -> FastAPI:
@@ -184,30 +185,43 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
     def task_redirect(task_id: str) -> RedirectResponse:
         return RedirectResponse(url=f"/tasks/{task_id}", status_code=303)
 
+    def require_credential_provider(provider: str) -> None:
+        if provider != dependencies.provider_name:
+            raise HTTPException(
+                status_code=422,
+                detail="provider does not match the configured execution mode",
+            )
+
     @app.middleware("http")
     async def enforce_json_same_origin(request: Request, call_next):
+        host = request.headers.get("host", "")
+        hostname = _host_name(host)
+        allowed_hosts = {item.lower() for item in dependencies.allowed_hosts}
+        if hostname is None or hostname not in allowed_hosts:
+            return JSONResponse(
+                status_code=403, content={"detail": "untrusted host"}
+            )
         origin = request.headers.get("origin")
         if request.url.path.startswith("/api/") and origin is not None:
             try:
                 parsed = urlsplit(origin)
-                origin_value = _normalized_origin(
-                    parsed.scheme, parsed.hostname, parsed.port
-                )
-                request_value = _normalized_origin(
-                    request.url.scheme, request.url.hostname, request.url.port
-                )
+                parsed.port
                 malformed = bool(
-                    parsed.username
+                    parsed.scheme not in {"http", "https"}
+                    or parsed.hostname is None
+                    or parsed.username
                     or parsed.password
                     or parsed.query
                     or parsed.fragment
-                    or parsed.path not in {"", "/"}
+                    or parsed.path
                 )
             except ValueError:
                 malformed = True
-                origin_value = None
-                request_value = None
-            if malformed or origin_value is None or origin_value != request_value:
+            if (
+                malformed
+                or parsed.scheme != request.url.scheme
+                or parsed.netloc != request.url.netloc
+            ):
                 return JSONResponse(
                     status_code=403, content={"detail": "cross-origin request denied"}
                 )
@@ -243,6 +257,14 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
             content={"detail": "task is not active in this process"},
         )
 
+    @app.exception_handler(InvalidStateTransition)
+    async def invalid_state_transition(
+        _request: Request, _exc: InvalidStateTransition
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409, content={"detail": "invalid task transition"}
+        )
+
     @app.exception_handler(ApprovalMismatch)
     async def approval_mismatch(
         _request: Request, _exc: ApprovalMismatch
@@ -272,7 +294,11 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
         return render(
             request,
             "settings.html",
-            {"credential": dependencies.credential_service.status("openai")},
+            {
+                "credential": dependencies.credential_service.status(
+                    dependencies.provider_name
+                )
+            },
         )
 
     @app.post("/tasks")
@@ -315,7 +341,6 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
         request: Request, task_id: str
     ) -> RedirectResponse:
         await verified_form(request)
-        require_task_status(task_id, TaskStatus.RUNNING)
         dependencies.task_service.advance(task_id)
         return task_redirect(task_id)
 
@@ -328,7 +353,6 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
             payload = ApprovalRequest.model_validate(fields)
         except ValidationError:
             raise HTTPException(status_code=422, detail="invalid approval input") from None
-        require_task_status(task_id, TaskStatus.WAITING_APPROVAL)
         dependencies.task_service.approve(task_id, payload.fingerprint)
         return task_redirect(task_id)
 
@@ -341,7 +365,6 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
             payload = RejectionRequest.model_validate(fields)
         except ValidationError:
             raise HTTPException(status_code=422, detail="invalid rejection input") from None
-        require_task_status(task_id, TaskStatus.WAITING_APPROVAL)
         dependencies.task_service.reject(task_id, reason=payload.reason)
         return task_redirect(task_id)
 
@@ -350,9 +373,6 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
         request: Request, task_id: str
     ) -> RedirectResponse:
         await verified_form(request)
-        task = dependencies.task_repository.get(task_id)
-        if task.status in _TERMINAL_TASK_STATUSES:
-            raise HTTPException(status_code=409, detail="invalid task transition")
         dependencies.task_service.cancel(task_id)
         return task_redirect(task_id)
 
@@ -360,6 +380,7 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
     async def set_credential_from_form(
         request: Request, provider: str
     ) -> RedirectResponse:
+        require_credential_provider(provider)
         fields = await verified_form(request)
         try:
             payload = CredentialSetRequest.model_validate(fields)
@@ -380,6 +401,7 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
     async def clear_credential_from_form(
         request: Request, provider: str
     ) -> RedirectResponse:
+        require_credential_provider(provider)
         await verified_form(request)
         try:
             dependencies.credential_service.clear(provider)
@@ -419,12 +441,6 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
             payload.description, payload.workspace
         )
 
-    def require_task_status(task_id: str, expected: TaskStatus) -> TaskRecord:
-        task = dependencies.task_repository.get(task_id)
-        if task.status is not expected:
-            raise HTTPException(status_code=409, detail="invalid task transition")
-        return task
-
     @app.get("/api/tasks/{task_id}", response_model=TaskDetailResponse)
     def get_task(task_id: str) -> TaskDetailResponse:
         task = dependencies.task_repository.get(task_id)
@@ -437,28 +453,22 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
 
     @app.post("/api/tasks/{task_id}/advance", response_model=TaskRecord)
     def advance_task(task_id: str) -> TaskRecord:
-        require_task_status(task_id, TaskStatus.RUNNING)
         return dependencies.task_service.advance(task_id)
 
     @app.post("/api/tasks/{task_id}/approve", response_model=TaskRecord)
     def approve_task(task_id: str, payload: ApprovalRequest) -> TaskRecord:
-        require_task_status(task_id, TaskStatus.WAITING_APPROVAL)
         return dependencies.task_service.approve(task_id, payload.fingerprint)
 
     @app.post("/api/tasks/{task_id}/reject", response_model=TaskRecord)
     def reject_task(
         task_id: str, payload: RejectionRequest | None = None
     ) -> TaskRecord:
-        require_task_status(task_id, TaskStatus.WAITING_APPROVAL)
         return dependencies.task_service.reject(
             task_id, reason=payload.reason if payload is not None else ""
         )
 
     @app.post("/api/tasks/{task_id}/cancel", response_model=TaskRecord)
     def cancel_task(task_id: str) -> TaskRecord:
-        task = dependencies.task_repository.get(task_id)
-        if task.status in _TERMINAL_TASK_STATUSES:
-            raise HTTPException(status_code=409, detail="invalid task transition")
         return dependencies.task_service.cancel(task_id)
 
     def credential_status(provider: str) -> CredentialStatusResponse:
@@ -472,6 +482,7 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
         "/api/credentials/{provider}", response_model=CredentialStatusResponse
     )
     def get_credential_status(provider: str) -> CredentialStatusResponse:
+        require_credential_provider(provider)
         return credential_status(provider)
 
     @app.put(
@@ -480,6 +491,7 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
     def set_credential(
         provider: str, payload: CredentialSetRequest
     ) -> CredentialStatusResponse:
+        require_credential_provider(provider)
         try:
             dependencies.credential_service.set(provider, payload.secret)
         except ValueError:
@@ -496,6 +508,7 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
         "/api/credentials/{provider}", response_model=CredentialStatusResponse
     )
     def clear_credential(provider: str) -> CredentialStatusResponse:
+        require_credential_provider(provider)
         try:
             dependencies.credential_service.clear(provider)
         except TypeError:

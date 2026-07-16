@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Lock, RLock
 
 from forgeloop.loop import AgentLoop, ApprovalMismatch, LoopEvent
-from forgeloop.models import EventKind, TaskRecord
+from forgeloop.models import EventKind, TaskRecord, TaskStatus
 from forgeloop.repository import (
     ApprovalDecision,
     ApprovalRepository,
@@ -21,7 +21,19 @@ class TaskNotLoaded(RuntimeError):
     """Raised when a persisted task has no live in-process agent loop."""
 
 
+class InvalidStateTransition(RuntimeError):
+    """Raised when a task mutation is invalid for its current state."""
+
+
 LoopFactory = Callable[[Path, str], AgentLoop]
+_TERMINAL_STATUSES = {
+    TaskStatus.DENIED,
+    TaskStatus.SUCCEEDED,
+    TaskStatus.FAILED,
+    TaskStatus.BUDGET_EXHAUSTED,
+    TaskStatus.NO_PROGRESS,
+    TaskStatus.CANCELLED,
+}
 
 
 class TaskService:
@@ -54,6 +66,9 @@ class TaskService:
     def advance(self, task_id: str) -> TaskRecord:
         with self._task_lock(task_id):
             loop = self._require_loop(task_id)
+            state = loop.state
+            if state is None or state.status is not TaskStatus.RUNNING:
+                raise InvalidStateTransition("task is not running")
             loop.step()
             return self._sync(task_id, loop)
 
@@ -108,6 +123,9 @@ class TaskService:
     def cancel(self, task_id: str) -> TaskRecord:
         with self._task_lock(task_id):
             loop = self._require_loop(task_id)
+            state = loop.state
+            if state is None or state.status in _TERMINAL_STATUSES:
+                raise InvalidStateTransition("task cannot be cancelled")
             loop.cancel()
             return self._sync(task_id, loop)
 

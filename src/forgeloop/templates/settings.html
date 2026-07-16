@@ -3,16 +3,16 @@
 {% block content %}
   <section aria-labelledby="settings-heading">
     <h1 id="settings-heading">凭据设置</h1>
-    <p>OpenAI：{% if credential.configured %}已配置{% else %}未配置{% endif %}</p>
+    <p>{{ provider_name }}：{% if credential.configured %}已配置{% else %}未配置{% endif %}</p>
     <p>存储来源：{{ credential.source }}</p>
-    <form action="/settings/credentials/openai" method="post">
+    <form action="/settings/credentials/{{ provider_name }}" method="post">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <label for="secret">设置新凭据</label>
       <input id="secret" name="secret" type="password" autocomplete="new-password" required>
       <button type="submit">安全存储</button>
     </form>
     {% if credential.configured %}
-      <form action="/settings/credentials/openai/clear" method="post">
+      <form action="/settings/credentials/{{ provider_name }}/clear" method="post">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <button type="submit">清除凭据</button>
       </form>

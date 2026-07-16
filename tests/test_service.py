@@ -16,6 +16,7 @@ from forgeloop.providers import ScriptedProvider
 from forgeloop.repository import ApprovalRepository, TaskRepository
 from forgeloop.service import (
     ApprovalMismatch,
+    InvalidStateTransition,
     TaskNotFound,
     TaskNotLoaded,
     TaskService,
@@ -229,9 +230,57 @@ def test_cancel_persists_state_without_duplicate_events(repositories, tmp_path):
     assert [event.kind.value for event in events] == ["state", "state"]
     assert events[-1].data == {"status": "cancelled"}
 
-    service.cancel(task.id)
+    with pytest.raises(InvalidStateTransition):
+        service.cancel(task.id)
 
     assert tasks.list_events(task.id) == events
+
+
+def test_concurrent_cancel_allows_exactly_one_transition(repositories, tmp_path):
+    tasks, approvals = repositories
+    factory, _ = loop_factory_for([])
+    service = TaskService(tasks, approvals, factory)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = service.create("fix", workspace)
+    start = threading.Barrier(3)
+
+    def cancel_once():
+        start.wait()
+        try:
+            return service.cancel(task.id)
+        except InvalidStateTransition as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(cancel_once) for _ in range(2)]
+        start.wait()
+        results = [future.result() for future in futures]
+
+    assert sum(isinstance(result, InvalidStateTransition) for result in results) == 1
+    assert sum(getattr(result, "status", None) == "cancelled" for result in results) == 1
+    assert [event.data for event in tasks.list_events(task.id)] == [
+        {"status": "running"},
+        {"status": "cancelled"},
+    ]
+
+
+def test_terminal_task_cannot_advance(repositories, tmp_path):
+    tasks, approvals = repositories
+    factory, _ = loop_factory_for([action("read_file", path="note.txt")])
+    service = TaskService(tasks, approvals, factory)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    task = service.create("read", workspace)
+    service.cancel(task.id)
+    loop = service._loops[task.id]
+    events_before = tasks.list_events(task.id)
+
+    with pytest.raises(InvalidStateTransition):
+        service.advance(task.id)
+
+    assert loop.state.step_count == 0
+    assert tasks.list_events(task.id) == events_before
 
 
 @pytest.mark.parametrize("operation", ["advance", "approve", "reject", "cancel"])

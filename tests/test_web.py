@@ -27,8 +27,10 @@ class MemoryCredentialBackend:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.failure: str | None = None
+        self.reads: list[str] = []
 
     def get(self, provider: str) -> str | None:
+        self.reads.append(provider)
         if self.failure is not None:
             raise RuntimeError(self.failure)
         return self.values.get(provider)
@@ -144,15 +146,19 @@ def test_home_explains_product_and_security_boundary(client: TestClient) -> None
 
 
 def test_settings_never_returns_credential(
-    client: TestClient, credential_service: CredentialService
+    client: TestClient,
+    credential_service: CredentialService,
+    credential_backend: MemoryCredentialBackend,
 ) -> None:
-    credential_service.set("openai", "sk-never-render-this")
+    credential_service.set("demo", "sk-never-render-this")
 
     response = client.get("/settings")
 
     assert response.status_code == 200
     assert "sk-never-render-this" not in response.text
     assert "已配置" in response.text
+    assert "demo" in response.text
+    assert credential_backend.reads == ["demo"]
 
 
 def test_mock_task_can_be_created_and_viewed(
@@ -253,6 +259,57 @@ def test_json_api_rejects_malformed_origin_without_error(
     assert response.json() == {"detail": "cross-origin request denied"}
 
 
+def test_untrusted_host_is_rejected_even_when_origin_matches(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/api/tasks/missing",
+        headers={"Host": "evil.example", "Origin": "http://evil.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "untrusted host"}
+
+
+def test_origin_must_exactly_match_trusted_request_origin(
+    client: TestClient,
+) -> None:
+    default_port = client.get(
+        "/api/tasks/missing", headers={"Origin": "http://testserver:80"}
+    )
+    trusted = client.get(
+        "/api/tasks/missing", headers={"Origin": "http://testserver"}
+    )
+
+    assert default_port.status_code == 403
+    assert trusted.status_code == 404
+
+
+def test_explicit_allowed_host_supports_deployment(
+    web_harness: WebHarness,
+) -> None:
+    dependencies = AppDependencies(
+        task_service=web_harness.task_service,
+        task_repository=web_harness.task_repository,
+        credential_service=CredentialService(MemoryCredentialBackend()),
+        csrf_secret=b"deployment-csrf-secret",
+        demo_runner=None,
+        provider_name="demo",
+        allowed_hosts=frozenset({"deploy.internal"}),
+    )
+
+    with TestClient(
+        create_app(dependencies), base_url="http://deploy.internal"
+    ) as deployment_client:
+        assert deployment_client.get("/healthz").status_code == 200
+        assert (
+            deployment_client.get(
+                "/healthz", headers={"Host": "testserver"}
+            ).status_code
+            == 403
+        )
+
+
 def test_task_detail_includes_ordered_audit_events(
     web_harness: WebHarness, tmp_path: Path
 ) -> None:
@@ -320,20 +377,20 @@ def test_pending_task_can_be_approved_then_cancelled(
 def test_credential_api_exposes_only_status_metadata(
     client: TestClient, credential_backend: MemoryCredentialBackend
 ) -> None:
-    initial = client.get("/api/credentials/openai")
+    initial = client.get("/api/credentials/demo")
     assert initial.status_code == 200
     assert initial.json() == {"configured": False, "source": "memory"}
 
     secret = "sk-never-return-this-value"
     configured = client.put(
-        "/api/credentials/openai", json={"secret": secret}
+        "/api/credentials/demo", json={"secret": secret}
     )
     assert configured.status_code == 200
     assert configured.json() == {"configured": True, "source": "memory"}
     assert secret not in configured.text
-    assert credential_backend.values["openai"] == secret
+    assert credential_backend.values["demo"] == secret
 
-    cleared = client.delete("/api/credentials/openai")
+    cleared = client.delete("/api/credentials/demo")
     assert cleared.status_code == 200
     assert cleared.json() == {"configured": False, "source": "memory"}
 
@@ -342,7 +399,7 @@ def test_bad_credential_input_is_422_without_disclosure(client: TestClient) -> N
     secret = " " * 17_000
 
     response = client.put(
-        "/api/credentials/openai", json={"secret": secret}
+        "/api/credentials/demo", json={"secret": secret}
     )
 
     assert response.status_code == 422
@@ -430,21 +487,21 @@ def test_browser_approval_and_settings_forms_use_csrf(
     settings_token = csrf_token(settings)
     secret = "sk-browser-only-secret"
     configured = client.post(
-        "/settings/credentials/openai",
+        "/settings/credentials/demo",
         data={"_csrf": settings_token, "secret": secret},
         follow_redirects=False,
     )
     assert configured.status_code == 303
     assert secret not in configured.text
-    assert credential_backend.values["openai"] == secret
+    assert credential_backend.values["demo"] == secret
 
     cleared = client.post(
-        "/settings/credentials/openai/clear",
+        "/settings/credentials/demo/clear",
         data={"_csrf": settings_token},
         follow_redirects=False,
     )
     assert cleared.status_code == 303
-    assert "openai" not in credential_backend.values
+    assert "demo" not in credential_backend.values
 
 
 def test_demo_runs_only_from_csrf_protected_form(client: TestClient) -> None:
@@ -467,12 +524,46 @@ def test_internal_errors_never_disclose_exception_or_secret(
     secret = "sk-backend-failure-secret"
     credential_backend.failure = secret
 
-    response = client.get("/api/credentials/openai")
+    response = client.get("/api/credentials/demo")
 
     assert response.status_code == 500
     assert response.json() == {"detail": "internal server error"}
     assert secret not in response.text
     assert "Traceback" not in response.text
+
+
+@pytest.mark.parametrize("method", ["get", "put", "delete"])
+def test_credential_api_rejects_provider_mismatch(
+    client: TestClient,
+    credential_backend: MemoryCredentialBackend,
+    method: str,
+) -> None:
+    kwargs = {"json": {"secret": "sk-must-not-be-stored"}} if method == "put" else {}
+
+    response = getattr(client, method)("/api/credentials/openai", **kwargs)
+
+    assert response.status_code == 422
+    assert credential_backend.values == {}
+    assert credential_backend.reads == []
+
+
+@pytest.mark.parametrize("suffix", ["", "/clear"])
+def test_settings_form_rejects_provider_mismatch(
+    client: TestClient,
+    credential_backend: MemoryCredentialBackend,
+    suffix: str,
+) -> None:
+    token = csrf_token(client.get("/settings"))
+    credential_backend.reads.clear()
+    fields = {"_csrf": token}
+    if not suffix:
+        fields["secret"] = "sk-must-not-be-stored"
+
+    response = client.post(f"/settings/credentials/openai{suffix}", data=fields)
+
+    assert response.status_code == 422
+    assert credential_backend.values == {}
+    assert credential_backend.reads == []
 
 
 def test_empty_csrf_secret_is_rejected(web_harness: WebHarness) -> None:

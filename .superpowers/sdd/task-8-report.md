@@ -143,3 +143,74 @@ No unresolved functional concern remains. The in-app browser runtime reported no
 available browser backend, so screenshot-based desktop/mobile visual QA could not
 be performed. Static visual/accessibility review and rendered TestClient HTML
 coverage passed; a later manual browser glance is optional, not a release blocker.
+
+---
+
+## External review remediation
+
+The external review identified one critical Host/DNS-rebinding boundary and two
+important consistency/concurrency gaps. All three were repaired test-first. This
+section supersedes the original self-review statements about normalized Origin
+comparison and Web-owned task state prechecks.
+
+### RED / GREEN evidence
+
+1. Trusted Host before exact Origin
+   - RED: `Host: evil.example` paired with `Origin: http://evil.example` reached
+     the task route and returned 404; `Origin: http://testserver:80` was treated
+     as equivalent to `http://testserver`; `AppDependencies` rejected the new
+     explicit `allowed_hosts` argument.
+   - GREEN: every request first parses the Host header to a hostname and checks
+     the injected frozenset allowlist. Defaults are `localhost`, `127.0.0.1`,
+     `::1`, and `testserver`; deployments can inject a different hostname set.
+     Only after Host trust succeeds does the JSON API compare Origin scheme and
+     netloc exactly against the request origin. Malformed Host/Origin values and
+     DNS-rebinding pairs fail 403.
+2. One injected provider across settings and credential routes
+   - RED: a demo-mode settings page read `openai`, while mismatched credential
+     GET/PUT/DELETE and HTML set/clear paths returned success and touched the
+     backend.
+   - GREEN: settings status, labels, and form actions use
+     `dependencies.provider_name`. Every credential path must match it exactly or
+     return 422 before any credential backend read or mutation. Status/set/clear
+     mismatch tests verify zero backend access.
+3. Lock-owned task state transitions
+   - RED: importing `InvalidStateTransition` failed; after adding the requested
+     public exception, repeated and concurrent cancel calls both returned success,
+     and advancing a cancelled task returned silently. Removing Web's repository
+     prechecks exposed generic 500 responses.
+   - GREEN: `TaskService.advance` requires RUNNING and `cancel` rejects every
+     terminal status while holding the same per-task `RLock` used for mutation.
+     Two synchronized cancel callers now yield exactly one cancelled result and
+     one `InvalidStateTransition`, with one cancellation event. Terminal advance
+     leaves loop step count and audit events unchanged. Web performs no lock-free
+     state precheck and maps the service exception to 409; approve/reject retain
+     their existing lock-owned pending-approval validation.
+
+### Post-remediation verification
+
+Focused service/Web suite:
+
+```text
+.venv/bin/python -m pytest tests/test_service.py tests/test_web.py -q
+...............................................                          [100%]
+47 passed in 0.49s
+```
+
+Full regression suite:
+
+```text
+.venv/bin/python -m pytest -q
+........................................................................ [ 32%]
+........................................................................ [ 64%]
+........................................................................ [ 96%]
+.......                                                                  [100%]
+223 passed in 6.08s
+```
+
+`.venv/bin/python -m py_compile src/forgeloop/service.py src/forgeloop/web.py`
+and `git diff --check` passed. Both pytest runs were warning-free. Tests use the
+real FastAPI application, SQLite repositories, `TaskService`, and live
+`AgentLoop` state; no test-only production method or mock assertion was added.
+The controller-owned `PLAN.md` remains outside this remediation's staging set.
+No unresolved remediation concern remains.
