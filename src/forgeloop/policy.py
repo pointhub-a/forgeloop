@@ -70,6 +70,11 @@ def action_fingerprint(action: Action) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _defines_git_alias(config_assignment: str) -> bool:
+    config_name = config_assignment.partition("=")[0]
+    return config_name.casefold().startswith("alias.")
+
+
 def _parse_git_subcommand(argv: list[str]) -> tuple[str, list[str]] | None:
     index = 1
     while index < len(argv):
@@ -79,6 +84,8 @@ def _parse_git_subcommand(argv: list[str]) -> tuple[str, list[str]] | None:
             break
         if argument in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
             if index + 1 >= len(argv):
+                return None
+            if argument == "-c" and _defines_git_alias(argv[index + 1]):
                 return None
             index += 2
             continue

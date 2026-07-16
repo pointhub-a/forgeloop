@@ -59,6 +59,21 @@ def test_git_global_options_cannot_bypass_dangerous_command_rules(
     assert decision.rule_id == rule_id
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["git", "-c", "alias.x=reset", "x", "--hard"],
+        ["git", "-calias.x=reset", "x", "--hard"],
+    ],
+)
+def test_action_supplied_git_aliases_are_denied(tmp_path, argv):
+    decision = PolicyEngine().evaluate(
+        Action(kind="run_command", arguments={"argv": argv}), tmp_path
+    )
+
+    assert decision.effect == "deny"
+
+
 @pytest.mark.parametrize("metacharacter", [";", "&", "(", ")", "\n", "\r"])
 def test_shell_metacharacters_are_denied(tmp_path, metacharacter):
     decision = PolicyEngine().evaluate(
