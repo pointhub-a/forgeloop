@@ -62,3 +62,38 @@ Implemented the Task 5 SQLite memory and credential security boundaries:
 
 No unresolved Task 5 concern was found. The main controller requested that the
 internal reviewer be stopped and will perform the external review.
+
+## External Review Follow-up
+
+The external review identified and this follow-up resolved one Critical and one
+Important issue:
+
+1. Memory values were previously checked only through their key name, allowing
+   a credential-shaped value under an ordinary key to enter SQLite. Memory now
+   calls the credential module's shared token-shape predicate before any SQL
+   write and rejects the value rather than silently storing a redacted variant.
+2. `CredentialService.set` previously accepted empty and whitespace-only
+   values. It now rejects them before calling the backend, while `status` and
+   `get_for_provider` consistently treat externally supplied blank backend
+   values as unconfigured.
+
+### Follow-up RED
+
+- The memory regression failed with `DID NOT RAISE ValueError` before reaching
+  its direct SQLite assertion, demonstrating that the rejection guard did not
+  yet exist; GREEN then confirmed the value count remained zero.
+- The three empty/whitespace set cases each failed with
+  `DID NOT RAISE ValueError`.
+- A backend preloaded with whitespace failed because `get_for_provider`
+  returned that whitespace instead of `None`.
+
+### Follow-up GREEN
+
+- New regressions: `5 passed in 0.01s`.
+- Focused memory and credential suite: `28 passed in 0.02s`.
+- Full suite: `123 passed in 5.44s`.
+- `git diff --check`: clean.
+
+The follow-up tests use the real temporary SQLite database and the existing
+complete in-memory credential fake. No new mocks, test-only production methods,
+or secret-bearing exception messages were introduced.

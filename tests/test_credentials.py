@@ -57,6 +57,26 @@ def test_service_gets_for_provider_and_clears_credential(fake_backend):
     assert service.status("openai").configured is False
 
 
+@pytest.mark.parametrize("secret", ["", " ", "\t\r\n"])
+def test_service_rejects_empty_or_whitespace_credential(fake_backend, secret):
+    service = CredentialService(fake_backend)
+
+    with pytest.raises(ValueError, match="empty"):
+        service.set("openai", secret)
+
+    assert fake_backend.values == {}
+    assert service.get_for_provider("openai") is None
+    assert service.status("openai").configured is False
+
+
+def test_service_treats_backend_whitespace_as_unconfigured(fake_backend):
+    fake_backend.values["openai"] = " \t"
+    service = CredentialService(fake_backend)
+
+    assert service.get_for_provider("openai") is None
+    assert service.status("openai").configured is False
+
+
 def test_redact_masks_registered_and_token_shaped_values():
     text = redact(
         "Authorization: Bearer sk-example-secret; fallback sk-unregistered-token",

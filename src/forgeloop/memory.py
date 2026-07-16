@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from forgeloop.credentials import contains_token_shaped_secret
+
 
 _SENSITIVE_KEY = re.compile(r"secret|token|password|api[_-]?key", re.IGNORECASE)
 
@@ -52,6 +54,8 @@ class MemoryStore:
 
         if _SENSITIVE_KEY.search(key):
             raise ValueError("sensitive credential-shaped memory keys are forbidden")
+        if contains_token_shaped_secret(value):
+            raise ValueError("sensitive credential-shaped memory values are forbidden")
 
         encoded_tags = json.dumps(
             sorted(set(tags)), ensure_ascii=False, separators=(",", ":")

@@ -49,11 +49,13 @@ class CredentialService:
     def status(self, provider: str) -> CredentialStatus:
         return CredentialStatus(
             provider=provider,
-            configured=self._backend.get(provider) is not None,
+            configured=self.get_for_provider(provider) is not None,
             source=self._backend.source,
         )
 
     def set(self, provider: str, secret: str) -> None:
+        if not secret.strip():
+            raise ValueError("credential must not be empty or whitespace")
         self._backend.set(provider, secret)
 
     def clear(self, provider: str) -> None:
@@ -62,7 +64,10 @@ class CredentialService:
     def get_for_provider(self, provider: str) -> str | None:
         """Return a key only to provider composition code."""
 
-        return self._backend.get(provider)
+        secret = self._backend.get(provider)
+        if secret is None or not secret.strip():
+            return None
+        return secret
 
 
 class KeyringBackend:
@@ -138,6 +143,14 @@ class SecretFileBackend:
 
     def clear(self, provider: str) -> None:
         raise TypeError("secret file credentials are read-only")
+
+
+def contains_token_shaped_secret(text: str) -> bool:
+    """Return whether text contains a credential-shaped token."""
+
+    return _BEARER_TOKEN.search(text) is not None or any(
+        pattern.search(text) is not None for pattern in _TOKEN_PATTERNS
+    )
 
 
 def redact(text: str, secrets: list[str] | tuple[str, ...]) -> str:

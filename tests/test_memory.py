@@ -97,3 +97,18 @@ def test_recall_respects_limit(store):
 def test_upsert_rejects_credential_shaped_keys(store, key):
     with pytest.raises(ValueError, match="sensitive"):
         store.upsert("project", key, "must not be stored", ["python"])
+
+
+def test_upsert_rejects_token_shaped_value_without_persisting(tmp_path):
+    database = tmp_path / "memory.sqlite3"
+    store = MemoryStore(database)
+    fake_token = "sk-example-secret"
+
+    with pytest.raises(ValueError, match="sensitive"):
+        store.upsert("project", "provider note", fake_token, ["python"])
+
+    with sqlite3.connect(database) as connection:
+        persisted = connection.execute(
+            "SELECT COUNT(*) FROM memories WHERE value = ?", (fake_token,)
+        ).fetchone()[0]
+    assert persisted == 0
