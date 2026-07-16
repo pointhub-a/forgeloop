@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "A testable, auditable coding-agent harness"
 requires-python = ">=3.12"
 dependencies = [
+    "keyring>=25,<26",
     "pydantic>=2.7,<3",
 ]
 
