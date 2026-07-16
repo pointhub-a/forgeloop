@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}机制演示 · ForgeLoop{% endblock %}
+{% block content %}
+  <section aria-labelledby="demo-heading">
+    <p class="eyebrow">离线 / 可重复</p>
+    <h1 id="demo-heading">确定性机制演示</h1>
+    <p>运行预置场景，观察策略核准、验证反馈与停止条件，不调用外部模型。</p>
+    <form action="/demo" method="post">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit">运行演示</button>
+    </form>
+    {% if demo_result is not none %}
+      <h2>结构化证据</h2>
+      <pre class="trace">{{ demo_result | tojson(indent=2) }}</pre>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -8,12 +8,16 @@ version = "0.1.0"
 description = "A testable, auditable coding-agent harness"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115,<1",
+    "jinja2>=3.1,<4",
     "keyring>=25,<26",
     "pydantic>=2.7,<3",
+    "uvicorn>=0.34,<1",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "httpx2>=2,<3",
     "pytest>=8,<9",
 ]
 
@@ -22,6 +26,9 @@ forgeloop = "forgeloop.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+forgeloop = ["static/*.css", "static/*.js", "templates/*.html"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}任务 {{ task.id }} · ForgeLoop{% endblock %}
+{% block content %}
+  <section aria-labelledby="task-heading">
+    <p class="status-label">{{ task.status.value }}</p>
+    <h1 id="task-heading">{{ task.description }}</h1>
+    <p>执行模式：<strong>{{ provider_name }}</strong></p>
+    <dl class="trace">
+      <dt>Task ID</dt><dd class="task-id">{{ task.id }}</dd>
+      <dt>工作区</dt><dd>{{ task.workspace }}</dd>
+      <dt>步数</dt><dd>{{ task.step_count }}</dd>
+    </dl>
+
+    {% if task.status.value == "running" %}
+      <form action="/tasks/{{ task.id }}/advance" method="post">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit">推进一步</button>
+      </form>
+    {% elif task.status.value == "waiting_approval" %}
+      <h2>等待人工核准</h2>
+      <pre class="trace">{{ task.pending_action.model_dump(mode="json") | tojson(indent=2) }}</pre>
+      <form action="/tasks/{{ task.id }}/approve" method="post">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
+        <button type="submit">核准精确动作</button>
+      </form>
+      <form action="/tasks/{{ task.id }}/reject" method="post">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <label for="reason">拒绝原因</label>
+        <input id="reason" name="reason" type="text">
+        <button type="submit">拒绝</button>
+      </form>
+    {% endif %}
+
+    {% if task.status.value not in ["denied", "succeeded", "failed", "budget_exhausted", "no_progress", "cancelled"] %}
+      <form action="/tasks/{{ task.id }}/cancel" method="post">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit">取消任务</button>
+      </form>
+    {% endif %}
+  </section>
+
+  <section aria-labelledby="trace-heading">
+    <h2 id="trace-heading">审计轨迹</h2>
+    <ol class="trace">
+      {% for event in events %}
+        <li><strong>{{ event.kind.value }}</strong> · {{ event.summary }}</li>
+      {% else %}
+        <li>尚无事件。</li>
+      {% endfor %}
+    </ol>
+  </section>
+{% endblock %}

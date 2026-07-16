@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}创建任务 · ForgeLoop{% endblock %}
+{% block content %}<div class="first-viewport">
+  <section class="task-panel" aria-labelledby="task-heading">
+    <p class="eyebrow">本地可审计编码代理</p>
+    <h1 id="task-heading">把具体变更交给 ForgeLoop</h1>
+    <p class="lede">描述目标、锁定工作区，然后逐步观察模型建议、策略判断与验证证据。</p>
+    <form class="task-form" action="/tasks" method="post">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="provider" value="{{ provider_name }}">
+      <label for="description">任务描述</label>
+      <textarea id="description" name="description" required></textarea>
+      <label for="workspace">工作区</label>
+      <input id="workspace" name="workspace" type="text" required>
+      <p class="mode">执行模式：<strong>{{ provider_name }}</strong></p>
+      <button type="submit">创建任务</button>
+    </form>
+  </section>
+  <aside class="boundary-panel" aria-labelledby="boundary-heading">
+    <p class="panel-index">边界 / 01</p>
+    <h2 id="boundary-heading">安全边界</h2>
+    <p>所有操作限定在指定工作区；高风险动作必须经人工核准。</p>
+    <ul>
+      <li>密钥仅由凭据服务保管</li>
+      <li>任务转换与证据写入 SQLite</li>
+      <li>审批绑定精确动作指纹</li>
+    </ul>
+  </aside>
+</div>{% endblock %}
