@@ -83,3 +83,11 @@
 - 发现：2026-07-17 模型指南推荐 GPT-5.6 系列；GPT-4.1 mini 已列为 deprecated。
 - 决策：真实 Provider 的默认配置改为成本敏感 `gpt-5.6-luna`；仍允许 TOML 覆盖；离线 Mock 不受影响。
 - 来源：https://developers.openai.com/api/docs/models 与 https://developers.openai.com/api/docs/models/all
+
+## 2026-07-17 — TASK-006
+
+- 实现者：`/root/task6_agent_loop`；commits `5dd624b`、`ff329f2`。
+- 初始验证：Provider/Loop 32 focused，155 full passed；完全离线 ScriptedProvider。
+- 外部评审：发现 approval 可变引用绕过、stale validation（2 Critical），已消费指纹死锁、审批恢复未结算预算、memory异常逃逸（3 Important）。
+- 修复：私有 canonical action snapshot + fingerprint + policy重评；所有潜在 workspace mutation 尝试前使验证失效；used指纹反馈；统一 `_finish_step`；memory operational error脱敏。
+- 最终：41 focused / 164 full；Spec PASS；Task Quality PASS—Ready；无遗留 finding。

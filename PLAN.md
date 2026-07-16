@@ -358,6 +358,8 @@ Commit: `feat: persist scoped memory and secure credentials [agent: delegated-wo
 
 ### Task 6: Provider Abstraction and Self-Written Agent Loop
 
+**Status:** Complete — commits `5dd624b`, `ff329f2`; spec compliance PASS; task quality ready.
+
 **Files:**
 - Create: `src/forgeloop/providers.py`
 - Create: `src/forgeloop/loop.py`
@@ -372,7 +374,7 @@ Commit: `feat: persist scoped memory and secure credentials [agent: delegated-wo
 
 `LoopState` owns `description`, `status`, `messages`, `events`, `step_count`, `validation_count`, `last_validation_passed`, `pending_action`, `pending_decision`, `used_approvals`, `summary`, and `tool_calls`. `AgentLoop(provider, policy, tools, validators, progress, memory, config, project_id)` is stateful: `start(description)` initializes state, `step()` performs exactly one model decision, `run(description)` starts and steps until a terminal/waiting state, `resolve_approval(fingerprint, approved)` only handles the exact pending fingerprint once, and `cancel()` deterministically marks cancellation. Internal feedback/tool roles remain visible to `ScriptedProvider`; the HTTP adapter maps non-API roles to prefixed user messages.
 
-- [ ] **Step 1: Write failing scripted-provider tests**
+- [x] **Step 1: Write failing scripted-provider tests**
 
 ```python
 def test_scripted_provider_records_feedback_messages():
@@ -385,11 +387,11 @@ def test_scripted_provider_fails_when_exhausted():
         ScriptedProvider([]).complete([], {})
 ```
 
-- [ ] **Step 2: Implement provider protocol and strict action parser**
+- [x] **Step 2: Implement provider protocol and strict action parser**
 
 Strip an optional fenced JSON wrapper only; parse exactly one JSON object; validate via `Action`; raise `ActionParseError` whose safe message can be appended as a structured feedback observation. Implement HTTP provider with `urllib.request`, explicit timeout, bearer header, one request/response, response-shape validation, internal-role normalization, and redacted exceptions.
 
-- [ ] **Step 3: Write failing loop feedback-correction test**
+- [x] **Step 3: Write failing loop feedback-correction test**
 
 ```python
 def test_failed_validation_is_fed_back_and_changes_next_action(harness):
@@ -405,7 +407,7 @@ def test_failed_validation_is_fed_back_and_changes_next_action(harness):
     assert provider.responses[0] != provider.responses[1]
 ```
 
-- [ ] **Step 4: Write failing governance and finish-gate tests**
+- [x] **Step 4: Write failing governance and finish-gate tests**
 
 ```python
 def test_dangerous_action_pauses_before_tool_execution(harness):
@@ -418,15 +420,15 @@ def test_finish_without_passing_validation_is_rejected(harness):
     assert result.status != "succeeded"
 ```
 
-- [ ] **Step 5: Implement one-step loop and stop order**
+- [x] **Step 5: Implement one-step loop and stop order**
 
 For each step: build a context bounded to the newest 64 KiB of message content, call provider, parse action, emit action event, observe the action fingerprint, evaluate policy, pause/deny/execute, convert validation to feedback, update progress, then evaluate stop conditions in order: cancelled, waiting approval, no progress, wall clock, steps, provider failure. Parse/provider failures count as steps and become safe feedback until the step budget is exhausted. `finish` succeeds only with latest passing validation; empty validators can never satisfy the gate.
 
-- [ ] **Step 6: Add memory actions and approval-resume tests**
+- [x] **Step 6: Add memory actions and approval-resume tests**
 
 Verify `remember`/`recall` use the configured project ID and recall limit/character budget. Approval accepts only the exact pending fingerprint, marks it consumed before execution, executes once, clears pending state, and resumes at `running`; rejection clears pending, appends feedback, and also resumes. A consumed or mismatched fingerprint raises `ApprovalMismatch` without executing a tool.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run: `python3 -m pytest tests/test_providers.py tests/test_loop.py -q`
 Expected: all deterministic loop states pass without network.
