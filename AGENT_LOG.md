@@ -99,3 +99,12 @@
 - 首轮评审修复：atomic `commit_transition`、工具前 durable approval intent、每任务 RLock、显式迁移版本、并发与失败注入。
 - 二轮评审修复：reject checkpoint/restore；intent 前完整无副作用审批校验；approved final sync 幂等重试且工具只执行一次；reason 定位 approval event。
 - 最终：54 focused / 193 full；Spec PASS；Task Quality PASS；Ready。
+
+## 2026-07-17 — TASK-008
+
+- 技能：`sites:sites-building`（仅用于现有 FastAPI WebUI 的信息架构/视觉约束，未运行会覆盖仓库的 Sites initializer）。
+- 实现者：`/root/task8_webui`；commits `058961b`、`8a5dc5d`。
+- 初始：20 focused / 213 full；无 warning；wheel 包含 templates/static。当前无 browser backend，完成静态 HTML/CSS 自审。
+- 依赖修订：Starlette 1.3.1 警告 legacy httpx，改用可安装的 `httpx2>=2,<3`，不隐藏 warning。
+- 评审修复：trusted Host 抵御 DNS rebinding；credential 全路由绑定 provider_name；状态检查进入 TaskService 锁内，Web 映射 409。
+- 最终：47 focused / 223 full；Spec compliant；Task quality Approved。

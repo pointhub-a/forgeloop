@@ -497,6 +497,8 @@ Commit: `feat: persist tasks events and approvals [agent: delegated-worker]`.
 
 ### Task 8: Local WebUI and HTTP API
 
+**Status:** Complete — commits `058961b`, `8a5dc5d`; spec compliance ✅; task quality approved.
+
 **Files:**
 - Modify: `pyproject.toml`
 - Create: `src/forgeloop/web.py`
@@ -513,9 +515,9 @@ Commit: `feat: persist tasks events and approvals [agent: delegated-worker]`.
 - Consumes: `TaskService`, `CredentialService`, demo factory.
 - Produces: `AppDependencies`, `create_app(dependencies: AppDependencies) -> FastAPI` and documented HTML/JSON routes.
 
-Add runtime dependencies `fastapi>=0.115,<1`, `uvicorn>=0.34,<1`, `jinja2>=3.1,<4`; add dev dependency `httpx>=0.28,<1` for FastAPI's TestClient. `AppDependencies(task_service, task_repository, credential_service, csrf_secret: bytes, demo_runner: Callable[[], dict[str, object]] | None)` is injected explicitly; Task 9/CLI owns default production composition. Routes never construct Providers or read keys directly.
+Add runtime dependencies `fastapi>=0.115,<1`, `uvicorn>=0.34,<1`, `jinja2>=3.1,<4`; add dev dependency `httpx2>=2,<3` for the current Starlette TestClient (do not suppress its deprecation warning by retaining legacy `httpx`). `AppDependencies(task_service, task_repository, credential_service, csrf_secret: bytes, provider_name: str = "demo", demo_runner: Callable[[], dict[str, object]] | None = None, allowed_hosts: frozenset[str] = {"127.0.0.1", "::1", "localhost", "testserver"})` is injected explicitly; Task 9/CLI owns default production composition. A middleware rejects any Host hostname outside this allowlist before Origin/CSRF logic, preventing DNS rebinding; deployments must explicitly add their public hostname. Task and credential requests require a provider equal to the injected `provider_name`, otherwise return 422; routes never construct Providers or read keys directly.
 
-- [ ] **Step 1: Write failing smoke and disclosure tests**
+- [x] **Step 1: Write failing smoke and disclosure tests**
 
 ```python
 def test_home_explains_product_and_security_boundary(client):
@@ -531,11 +533,11 @@ def test_settings_never_returns_credential(client, credential_service):
     assert "已配置" in response.text
 ```
 
-- [ ] **Step 2: Implement app composition, templates, and local assets**
+- [x] **Step 2: Implement app composition, templates, and local assets**
 
 Use Jinja templates with a restrained ink/amber/teal engineering-console palette, system monospace for trace data, semantic HTML, visible focus states and responsive layout. The first viewport centers the concrete task form and safety boundary, not generic dashboard chrome. Serve no CDN assets or model-authored SVG. Expose health endpoint `/healthz` returning version and database readiness.
 
-- [ ] **Step 3: Write failing task and approval route tests**
+- [x] **Step 3: Write failing task and approval route tests**
 
 ```python
 def test_mock_task_can_be_created_and_viewed(client):
@@ -549,11 +551,11 @@ def test_approval_requires_matching_fingerprint(client, pending_task):
     assert response.status_code == 409
 ```
 
-- [ ] **Step 4: Implement API routes and CSRF on browser forms**
+- [x] **Step 4: Implement API routes and CSRF on browser forms**
 
-Create typed request/response schemas. JSON API rejects a present `Origin` whose scheme/host does not match the request; HTML forms use an HMAC-signed CSRF token bound to an HttpOnly, SameSite=Strict nonce cookie. Provide routes to create/get/advance/approve/reject/cancel tasks and status/set/clear credentials; credential responses expose only configured/source. Return 404 for unknown tasks, 409 for invalid state transitions, 422 for bad input, and never expose traceback or secrets.
+Create typed request/response schemas. After Host allowlist validation, JSON API rejects a present `Origin` whose scheme/netloc does not exactly match the trusted request origin; HTML forms use an HMAC-signed CSRF token bound to an HttpOnly, SameSite=Strict nonce cookie. Provide routes to create/get/advance/approve/reject/cancel tasks and status/set/clear credentials; credential responses expose only configured/source. `TaskService` owns state-transition checks inside its per-task lock and raises `InvalidStateTransition`, which Web maps to 409; routes do not perform racy pre-checks. Return 404 for unknown tasks, 409 for invalid state transitions, 422 for bad input, and never expose traceback or secrets.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `python3 -m pytest tests/test_web.py -q`
 Expected: page, API, approval, CSRF, health and disclosure tests pass.
