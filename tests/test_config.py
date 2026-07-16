@@ -38,7 +38,7 @@ def test_default_config_has_bounded_budgets():
         ],
         "validators": [],
         "provider_base_url": "https://api.openai.com/v1/chat/completions",
-        "provider_model": "gpt-4.1-mini",
+        "provider_model": "gpt-5.6-luna",
     }
 
 
@@ -78,7 +78,7 @@ timeout_seconds = 45
             argv=["python3", "-m", "pytest", "-q"], timeout_seconds=45
         )
     ]
-    assert cfg.provider_model == "gpt-4.1-mini"
+    assert cfg.provider_model == "gpt-5.6-luna"
 
 
 @pytest.mark.parametrize(

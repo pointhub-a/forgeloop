@@ -59,7 +59,7 @@ class HarnessConfig(ConfigModel):
     )
     validators: list[ValidatorConfig] = Field(default_factory=list)
     provider_base_url: str = "https://api.openai.com/v1/chat/completions"
-    provider_model: NonEmptyString = "gpt-4.1-mini"
+    provider_model: NonEmptyString = "gpt-5.6-luna"
 
     @field_validator("provider_base_url")
     @classmethod
