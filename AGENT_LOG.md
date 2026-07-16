@@ -34,3 +34,13 @@
 - 停止点：HarnessConfig 缺少精确字段、类型和默认值，执行者拒绝猜测。
 - 人工修订：所有裸机命令改用 `python3`；SPEC §5.7 与 PLAN Task 1 补全完整配置 schema。
 - 结果：冷启动成功发现两项可复现规约缺陷；验证分支不合并。
+
+## 2026-07-17 — TASK-001
+
+- 技能：Superpowers `subagent-driven-development`、`test-driven-development`。
+- 实现者：`/root/task1_domain_config`；commit `5c07791`。
+- RED：models 与 config 分别以 `ModuleNotFoundError` 正确失败。
+- GREEN：30 tests passed；warnings-as-errors、pip check、compileall、diff check 通过。
+- 环境干预：系统 Python 为 3.9；主控定位 Codex 内置 Python 3.12.13 并要求使用 worktree `.venv`，未降低产品版本要求。
+- 双重评审：Spec compliant；Task quality Approved；无 Critical/Important/Minor。
+- 主控复核：枚举成员与 SPEC 状态机一致；Provider URL 与 SPEC §5.7 一致。

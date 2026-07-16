@@ -55,6 +55,8 @@ Task 1 is foundational. Tasks 2–5 consume Task 1 and can be developed independ
 
 ### Task 1: Package Foundation, Domain Models, and Configuration
 
+**Status:** Complete — commit `5c07791`; spec compliance ✅; task quality approved.
+
 **Files:**
 - Create: `pyproject.toml`
 - Create: `Makefile`
@@ -68,7 +70,7 @@ Task 1 is foundational. Tasks 2–5 consume Task 1 and can be developed independ
 - Produces: `Action(kind: ActionKind, arguments: dict[str, object])`, `ToolResult`, `ValidationReport`, `GovernanceDecision`, `TaskRecord`, `Event`, `HarnessConfig`, `load_config(path: Path) -> HarnessConfig`.
 - Consumes: Python standard library and Pydantic only.
 
-- [ ] **Step 1: Write failing model tests**
+- [x] **Step 1: Write failing model tests**
 
 ```python
 def test_action_rejects_unknown_kind():
@@ -81,16 +83,16 @@ def test_validation_report_is_serializable():
     assert report.model_dump(mode="json")["exit_code"] == 0
 ```
 
-- [ ] **Step 2: Run model tests and observe red**
+- [x] **Step 2: Run model tests and observe red**
 
 Run: `python3 -m pytest tests/test_models.py -q`
 Expected: collection fails because `forgeloop.models` does not exist.
 
-- [ ] **Step 3: Implement strict domain models**
+- [x] **Step 3: Implement strict domain models**
 
 Define string enums for all action, task, validation, decision and event states. Configure models with `extra="forbid"`; add constructors `ToolResult.success/error` and `ValidationReport.passed/failed`; keep action arguments JSON-compatible.
 
-- [ ] **Step 4: Write failing configuration tests**
+- [x] **Step 4: Write failing configuration tests**
 
 ```python
 def test_load_config_rejects_unknown_field(tmp_path):
@@ -106,15 +108,15 @@ def test_default_config_has_bounded_budgets():
     assert cfg.max_output_bytes == 32768
 ```
 
-- [ ] **Step 5: Implement TOML schema and loader**
+- [x] **Step 5: Implement TOML schema and loader**
 
 Use `tomllib`; define `ValidatorConfig(argv: list[str], timeout_seconds: int = 60)`. Define every `HarnessConfig` field with the exact type and default from SPEC §5.7: `max_steps=20`, `max_validation_runs=8`, `wall_time_seconds=900`, `command_timeout_seconds=60`, `provider_timeout_seconds=60`, `max_output_bytes=32768`, `max_file_bytes=1048576`, `max_identical_failures=2`, `max_identical_actions=3`, `memory_recall_limit=10`, `memory_char_budget=4096`, the five allowed executables, the seven approval rule IDs, empty validators, the HTTPS provider URL, and model `gpt-4.1-mini`. Reject unknown fields and invalid limits with a `ConfigError` that includes the field path.
 
-- [ ] **Step 6: Add packaging and one-command tests**
+- [x] **Step 6: Add packaging and one-command tests**
 
 Declare runtime dependencies and `forgeloop = "forgeloop.cli:main"`; configure pytest with `pythonpath = ["src"]`; make `make test` run `python3 -m pytest -q` and `make dev` run `python3 -m forgeloop.cli serve`.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run: `make test`
 Expected: model and config tests pass.
