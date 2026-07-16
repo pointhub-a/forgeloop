@@ -41,9 +41,31 @@ def test_dangerous_commands_require_approval(tmp_path, argv):
     assert decision.effect == "require_approval"
 
 
-def test_shell_metacharacters_are_denied(tmp_path):
+@pytest.mark.parametrize(
+    ("argv", "rule_id"),
+    [
+        (["git", "-C", "repo", "reset", "--hard"], "git.hard_reset"),
+        (["git", "-c", "x=y", "push", "--force"], "git.force_push"),
+    ],
+)
+def test_git_global_options_cannot_bypass_dangerous_command_rules(
+    tmp_path, argv, rule_id
+):
     decision = PolicyEngine().evaluate(
-        Action(kind="run_command", arguments={"argv": ["pytest", ";", "env"]}),
+        Action(kind="run_command", arguments={"argv": argv}), tmp_path
+    )
+
+    assert decision.effect == "require_approval"
+    assert decision.rule_id == rule_id
+
+
+@pytest.mark.parametrize("metacharacter", [";", "&", "(", ")", "\n", "\r"])
+def test_shell_metacharacters_are_denied(tmp_path, metacharacter):
+    decision = PolicyEngine().evaluate(
+        Action(
+            kind="run_command",
+            arguments={"argv": ["pytest", metacharacter, "env"]},
+        ),
         tmp_path,
     )
 

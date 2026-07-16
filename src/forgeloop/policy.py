@@ -11,7 +11,42 @@ from forgeloop.models import Action, GovernanceDecision
 
 
 _PATH_ACTIONS = {"read_file", "write_file", "replace_text"}
-_SHELL_METACHARACTERS = (";", "&&", "|", ">", "<", "`", "$(")
+_SHELL_METACHARACTERS = (";", "&", "|", ">", "<", "(", ")", "`", "\n", "\r")
+_GIT_GLOBAL_OPTIONS_WITH_VALUE = {
+    "-C",
+    "-c",
+    "--config-env",
+    "--git-dir",
+    "--namespace",
+    "--work-tree",
+}
+_GIT_GLOBAL_OPTIONS_WITH_INLINE_VALUE = (
+    "--config-env=",
+    "--exec-path=",
+    "--git-dir=",
+    "--namespace=",
+    "--work-tree=",
+)
+_GIT_GLOBAL_FLAGS = {
+    "-h",
+    "--help",
+    "-p",
+    "--paginate",
+    "-P",
+    "--no-pager",
+    "-v",
+    "--version",
+    "--bare",
+    "--glob-pathspecs",
+    "--html-path",
+    "--icase-pathspecs",
+    "--info-path",
+    "--literal-pathspecs",
+    "--man-path",
+    "--no-optional-locks",
+    "--no-replace-objects",
+    "--noglob-pathspecs",
+}
 
 
 def resolve_workspace_path(workspace: Path, requested: str) -> Path:
@@ -33,6 +68,33 @@ def action_fingerprint(action: Action) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _parse_git_subcommand(argv: list[str]) -> tuple[str, list[str]] | None:
+    index = 1
+    while index < len(argv):
+        argument = argv[index]
+        if argument == "--":
+            index += 1
+            break
+        if argument in _GIT_GLOBAL_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(argv):
+                return None
+            index += 2
+            continue
+        if argument.startswith(_GIT_GLOBAL_OPTIONS_WITH_INLINE_VALUE):
+            index += 1
+            continue
+        if argument in _GIT_GLOBAL_FLAGS:
+            index += 1
+            continue
+        if argument.startswith("-"):
+            return None
+        break
+
+    if index >= len(argv):
+        return "", []
+    return argv[index], argv[index + 1 :]
 
 
 class PolicyEngine:
@@ -84,6 +146,17 @@ class PolicyEngine:
                     fingerprint=fingerprint,
                 )
 
+            git_command: tuple[str, list[str]] | None = ("", [])
+            if argv[0] == "git":
+                git_command = _parse_git_subcommand(argv)
+                if git_command is None:
+                    return GovernanceDecision(
+                        effect="deny",
+                        rule_id="command.invalid_argv",
+                        reason="The Git command has invalid global options.",
+                        fingerprint=fingerprint,
+                    )
+
             rule_id: str | None = None
             if argv[0] == "rm" and any(
                 argument in {"-r", "-R", "--recursive"}
@@ -95,11 +168,11 @@ class PolicyEngine:
                 for argument in argv[1:]
             ):
                 rule_id = "command.recursive_delete"
-            elif argv[:2] == ["git", "reset"] and "--hard" in argv[2:]:
+            elif git_command[0] == "reset" and "--hard" in git_command[1]:
                 rule_id = "git.hard_reset"
-            elif argv[:2] == ["git", "push"] and any(
+            elif git_command[0] == "push" and any(
                 argument in {"--force", "-f", "--force-with-lease"}
-                for argument in argv[2:]
+                for argument in git_command[1]
             ):
                 rule_id = "git.force_push"
 
