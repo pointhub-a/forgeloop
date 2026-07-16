@@ -499,6 +499,8 @@ Commit: `feat: persist tasks events and approvals [agent: delegated-worker]`.
 
 **Status:** Complete — commits `058961b`, `8a5dc5d`; spec compliance ✅; task quality approved.
 
+**Status:** Complete — commits `058961b`, `8a5dc5d`; spec compliance ✅; task quality approved.
+
 **Files:**
 - Modify: `pyproject.toml`
 - Create: `src/forgeloop/web.py`
@@ -576,6 +578,10 @@ Commit: `feat: add observable local WebUI and API [agent: delegated-worker]`.
 - Consumes: loop, policy, feedback, service and Web app.
 - Produces: `run_mechanism_demo(base_dir: Path) -> DemoResult`, CLI commands `serve`, `demo`, `credentials status|set|clear`.
 
+`DemoResult` is a strict serializable model containing `dangerous_action`, `first_validation`, `feedback_seen_by_provider`, `corrective_action`, `final_status`, `no_progress_status`, and auditable event summaries. `run_mechanism_demo` uses a real temporary workspace, `ToolRuntime`, `PolicyEngine`, `ValidatorRunner`, `ProgressTracker`, `MemoryStore`, and three ScriptedProvider scenarios; it never calls a network or reads credentials.
+
+`main(argv=None, *, backend=None, uvicorn_runner=None) -> int` is test-injectable. `credentials` defaults to `KeyringBackend`; `set` uses `getpass`, status/clear never reveal a key. `serve` accepts `--provider demo|openai`, `--host` (default `127.0.0.1`), `--port` (default `8000`), `--data-dir`, `--config`, and `--allow-remote`. It constructs repositories, memory, TaskService, CredentialService and AppDependencies. Only this composition root may call `get_for_provider`; OpenAI mode fails clearly if no key. Demo mode never reads a key. A non-loopback host is rejected unless `--allow-remote`, and the selected host is explicitly added to Web's `allowed_hosts`.
+
 - [ ] **Step 1: Write failing required-demonstration test**
 
 ```python
@@ -591,7 +597,7 @@ def test_demo_proves_all_required_mechanisms(tmp_path):
 
 - [ ] **Step 2: Implement isolated demo fixture and scripted responses**
 
-Create a temporary `calc.py` and deterministic validator that checks exact content. Run one scenario for governance, one fail→feedback→edit→pass→finish scenario, and one repeated-fingerprint scenario. Return structured evidence; do not depend on pytest being installed inside the demo workspace.
+Create a temporary `calc.py` and use `ValidatorRunner` with the active Python executable to check exact file content; do not depend on pytest inside the demo workspace. Run one scenario for governance, one fail→feedback→edit→pass→finish scenario, and one repeated-fingerprint scenario. Return structured evidence and event summaries. Never execute the dangerous governance example.
 
 - [ ] **Step 3: Write failing CLI tests**
 
@@ -608,7 +614,7 @@ def test_credentials_set_uses_hidden_input(monkeypatch, fake_backend):
 
 - [ ] **Step 4: Implement argparse CLI and executable script**
 
-`serve` starts Uvicorn with host default `127.0.0.1`; reject non-loopback bind unless `--allow-remote` is explicit. `credentials set` uses `getpass`; status emits no secret. The script imports and calls the same demo, avoiding duplicate logic.
+`serve` performs the exact composition described above and calls the injected/default Uvicorn runner with the app. Determine loopback using `ipaddress.ip_address(...).is_loopback` plus hostname `localhost`; reject other names/addresses unless `--allow-remote` is explicit. `credentials set` uses `getpass`; status emits no secret. The script imports and calls the same demo, avoiding duplicate logic.
 
 - [ ] **Step 5: Verify and commit**
 
