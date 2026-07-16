@@ -52,3 +52,11 @@
 - 规约澄清：危险签名必须先于普通 allowlist，否则 `rm -rf` 无法进入 HITL。
 - 评审修复：补齐 `&`/括号/换行；解析 Git global options；最终对 `git -c` 与 `--config-env` 动态配置全部 fail-closed deny，阻断别名绕过。
 - 最终双重评审：Spec compliant；Task quality Approved；无遗留问题。
+
+## 2026-07-17 — TASK-003
+
+- 实现者：`/root/task3_tools`；commits `5554519`、`95d287e`。
+- 接口裁决：`error_code`、`exit_code`、`duration_ms` 进入 `ToolResult.metadata`，不破坏 Task 1 模型。
+- 首轮：24 focused / 76 full tests passed。
+- 评审修复：用 Popen reader threads 保证执行期内存有界；POSIX 终止整个进程组；原子覆盖保留已有 mode。5 个回归测试先红后绿。
+- 最终：29 focused / 81 full tests passed；Spec compliant；Task quality Approved。

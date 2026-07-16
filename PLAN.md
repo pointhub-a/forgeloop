@@ -189,6 +189,8 @@ Commit: `feat: enforce deterministic workspace and command policy [agent: delega
 
 ### Task 3: Bounded Tool Runtime
 
+**Status:** Complete — commits `5554519`, `95d287e`; spec compliance ✅; task quality approved.
+
 **Files:**
 - Create: `src/forgeloop/tools.py`
 - Create: `tests/test_tools.py`
@@ -197,14 +199,14 @@ Commit: `feat: enforce deterministic workspace and command policy [agent: delega
 - Consumes: approved `Action`, `ToolResult`, `HarnessConfig`, `resolve_workspace_path`.
 - Produces: `ToolRuntime.execute(action: Action) -> ToolResult`; private handlers for read, write, replace and command.
 
-- [ ] **Step 1: Write failing file-tool tests**
+- [x] **Step 1: Write failing file-tool tests**
 
 ```python
 def test_replace_requires_exact_occurrence(runtime, tmp_path):
     (tmp_path / "a.py").write_text("x = 1\nx = 1\n")
     result = runtime.execute(Action(kind="replace_text", arguments={"path": "a.py", "old": "x = 1", "new": "x = 2", "count": 1}))
     assert not result.ok
-    assert result.error_code == "ambiguous_replacement"
+    assert result.metadata["error_code"] == "ambiguous_replacement"
 
 def test_write_then_read_round_trip(runtime):
     assert runtime.execute(Action(kind="write_file", arguments={"path": "pkg/a.py", "content": "ok"})).ok
@@ -212,11 +214,11 @@ def test_write_then_read_round_trip(runtime):
     assert result.output == "ok"
 ```
 
-- [ ] **Step 2: Observe red, then implement file handlers**
+- [x] **Step 2: Observe red, then implement file handlers**
 
 Use UTF-8 strict decoding, configured file-size limit, atomic same-directory temporary write plus `os.replace`, and exact occurrence validation before replacement.
 
-- [ ] **Step 3: Write failing subprocess tests**
+- [x] **Step 3: Write failing subprocess tests**
 
 ```python
 def test_command_uses_workspace_and_minimal_environment(runtime, tmp_path):
@@ -227,14 +229,14 @@ def test_command_uses_workspace_and_minimal_environment(runtime, tmp_path):
 
 def test_command_timeout_returns_structured_error(short_timeout_runtime):
     result = short_timeout_runtime.execute(Action(kind="run_command", arguments={"argv": [sys.executable, "-c", "import time; time.sleep(2)"]}))
-    assert result.error_code == "timeout"
+    assert result.metadata["error_code"] == "timeout"
 ```
 
-- [ ] **Step 4: Implement subprocess runner**
+- [x] **Step 4: Implement subprocess runner**
 
-Call `subprocess.run(argv, cwd=workspace, shell=False, capture_output=True, text=False, timeout=...)`; construct an environment from `PATH`, locale and test-specific safe variables only; decode with replacement; truncate deterministically and expose `exit_code` and duration metadata.
+Use `subprocess.Popen(argv, cwd=workspace, shell=False, stdout=PIPE, stderr=PIPE, start_new_session=True)` on POSIX. Reader threads continuously drain both pipes while retaining at most `max_output_bytes` per stream and discarding the remainder, so memory remains bounded during execution. On deadline, terminate then kill the entire POSIX process group; use a documented direct-process fallback on non-POSIX platforms. Construct an environment from `PATH`, locale and test-specific safe variables only; decode with replacement and mark truncation deterministically. Atomic replacement preserves an existing target's permission mode; a new file keeps the secure temporary-file default. Preserve Task 1's `ToolResult(ok, output, error, metadata)` interface: put machine-readable `error_code`, `exit_code`, and `duration_ms` in `metadata`, while `error` remains a human-readable message.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `python3 -m pytest tests/test_tools.py -q`
 Expected: all tool tests pass without network.
