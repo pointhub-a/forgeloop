@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import signal
+import stat
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import BinaryIO, Callable
 
 from forgeloop.config import HarnessConfig
 from forgeloop.models import Action, ToolResult
@@ -141,28 +144,15 @@ class ToolRuntime:
 
         started_ns = time.monotonic_ns()
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 argv,
                 cwd=self.workspace,
                 shell=False,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=False,
-                timeout=timeout_seconds,
                 env=self._command_environment(),
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            duration_ms = self._duration_ms(started_ns)
-            output, truncated = self._bounded_output(exc.stdout, exc.stderr)
-            return ToolResult.error(
-                f"Command timed out after {timeout_seconds} second(s).",
-                output=output,
-                metadata={
-                    "error_code": "timeout",
-                    "exit_code": None,
-                    "duration_ms": duration_ms,
-                    "output_truncated": truncated,
-                },
+                start_new_session=os.name == "posix",
             )
         except FileNotFoundError as exc:
             return ToolResult.error(
@@ -185,19 +175,64 @@ class ToolRuntime:
                 },
             )
 
+        assert process.stdout is not None
+        assert process.stderr is not None
+        stdout_buffer = bytearray()
+        stderr_buffer = bytearray()
+        stdout_truncated = [False]
+        stderr_truncated = [False]
+        reader_threads = [
+            threading.Thread(
+                target=self._drain_pipe,
+                args=(process.stdout, stdout_buffer, stdout_truncated),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=self._drain_pipe,
+                args=(process.stderr, stderr_buffer, stderr_truncated),
+                daemon=True,
+            ),
+        ]
+        for reader_thread in reader_threads:
+            reader_thread.start()
+
+        timed_out = False
+        try:
+            exit_code = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            self._terminate_timed_out_process(process)
+            exit_code = None
+
+        for reader_thread in reader_threads:
+            reader_thread.join(timeout=2)
+        for pipe, reader_thread in zip(
+            (process.stdout, process.stderr), reader_threads, strict=True
+        ):
+            if reader_thread.is_alive():
+                pipe.close()
+                reader_thread.join(timeout=1)
+
         duration_ms = self._duration_ms(started_ns)
-        output, truncated = self._bounded_output(
-            completed.stdout, completed.stderr
+        output = (bytes(stdout_buffer) + bytes(stderr_buffer)).decode(
+            "utf-8", errors="replace"
         )
+        truncated = stdout_truncated[0] or stderr_truncated[0]
         metadata: dict[str, object] = {
-            "exit_code": completed.returncode,
+            "exit_code": exit_code,
             "duration_ms": duration_ms,
             "output_truncated": truncated,
         }
-        if completed.returncode == 0:
+        if timed_out:
+            return ToolResult.error(
+                f"Command timed out after {timeout_seconds} second(s).",
+                output=output,
+                metadata={"error_code": "timeout", **metadata},
+            )
+        if exit_code == 0:
             return ToolResult.success(output, metadata=metadata)
         return ToolResult.error(
-            f"Command exited with status {completed.returncode}.",
+            f"Command exited with status {exit_code}.",
             output=output,
             metadata={"error_code": "command_failed", **metadata},
         )
@@ -255,6 +290,10 @@ class ToolRuntime:
         temporary_path: Path | None = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                existing_mode = stat.S_IMODE(path.stat().st_mode)
+            except FileNotFoundError:
+                existing_mode = None
             with tempfile.NamedTemporaryFile(
                 mode="wb",
                 dir=path.parent,
@@ -266,6 +305,8 @@ class ToolRuntime:
                 temporary_file.write(data)
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
+            if existing_mode is not None:
+                temporary_path.chmod(existing_mode)
             os.replace(temporary_path, path)
         except OSError as exc:
             if temporary_path is not None:
@@ -286,21 +327,49 @@ class ToolRuntime:
                 environment[key] = value
         return environment
 
-    def _bounded_output(
-        self, stdout: bytes | str | None, stderr: bytes | str | None
-    ) -> tuple[str, bool]:
-        combined = self._output_bytes(stdout) + self._output_bytes(stderr)
-        truncated = len(combined) > self.config.max_output_bytes
-        bounded = combined[: self.config.max_output_bytes]
-        return bounded.decode("utf-8", errors="replace"), truncated
+    def _drain_pipe(
+        self,
+        pipe: BinaryIO,
+        output: bytearray,
+        truncated: list[bool],
+    ) -> None:
+        try:
+            while chunk := pipe.read(65536):
+                remaining = self.config.max_output_bytes - len(output)
+                if remaining > 0:
+                    output.extend(chunk[:remaining])
+                if len(chunk) > remaining:
+                    truncated[0] = True
+        finally:
+            pipe.close()
 
     @staticmethod
-    def _output_bytes(output: bytes | str | None) -> bytes:
-        if output is None:
-            return b""
-        if isinstance(output, bytes):
-            return output
-        return output.encode("utf-8", errors="replace")
+    def _terminate_timed_out_process(process: subprocess.Popen[bytes]) -> None:
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            process.terminate()
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=1)
 
     @staticmethod
     def _duration_ms(started_ns: int) -> int:

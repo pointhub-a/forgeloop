@@ -1,5 +1,9 @@
 import os
+import signal
+import stat
 import sys
+import time
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -296,6 +300,56 @@ def test_command_output_is_truncated_deterministically(small_output_runtime):
     assert result.metadata["output_truncated"] is True
 
 
+def test_large_command_output_keeps_a_bounded_prefix_from_each_stream(
+    small_output_runtime,
+):
+    result = small_output_runtime.execute(
+        Action(
+            kind="run_command",
+            arguments={
+                "argv": [
+                    sys.executable,
+                    "-c",
+                    "import sys; "
+                    "chunk_out = b'O' * 65536; chunk_err = b'E' * 65536; "
+                    "[sys.stdout.buffer.write(chunk_out) for _ in range(64)]; "
+                    "[sys.stderr.buffer.write(chunk_err) for _ in range(64)]",
+                ]
+            },
+        )
+    )
+
+    assert result.ok
+    assert result.output == "OOOOOEEEEE"
+    assert result.metadata["output_truncated"] is True
+
+
+def test_large_command_output_does_not_scale_parent_python_memory(tmp_path):
+    runtime = ToolRuntime(tmp_path, HarnessConfig(max_output_bytes=16))
+    action = Action(
+        kind="run_command",
+        arguments={
+            "argv": [
+                sys.executable,
+                "-c",
+                "import sys; chunk = b'x' * 65536; "
+                "[sys.stdout.buffer.write(chunk) for _ in range(128)]",
+            ]
+        },
+    )
+
+    tracemalloc.start()
+    try:
+        result = runtime.execute(action)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result.ok
+    assert result.output == "x" * 16
+    assert peak_bytes < 1_000_000
+
+
 def test_command_output_decodes_invalid_utf8_with_replacement(runtime):
     result = runtime.execute(
         Action(
@@ -349,3 +403,68 @@ def test_command_not_found_returns_structured_error(runtime, tmp_path):
     assert not result.ok
     assert result.metadata["error_code"] == "command_not_found"
     assert result.metadata["exit_code"] is None
+
+
+def _process_exists(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
+def test_command_timeout_terminates_descendant_process(
+    short_timeout_runtime, tmp_path
+):
+    child_code = "import time; time.sleep(30)"
+    parent_code = (
+        "import pathlib, subprocess, sys, time; "
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+        "pathlib.Path('child.pid').write_text(str(child.pid)); "
+        "time.sleep(30)"
+    )
+
+    result = short_timeout_runtime.execute(
+        Action(
+            kind="run_command",
+            arguments={"argv": [sys.executable, "-c", parent_code]},
+        )
+    )
+
+    assert result.metadata["error_code"] == "timeout"
+    child_pid = int((tmp_path / "child.pid").read_text())
+    try:
+        deadline = time.monotonic() + 2
+        while _process_exists(child_pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not _process_exists(child_pid)
+    finally:
+        if _process_exists(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission modes")
+@pytest.mark.parametrize("action_kind", ["write_file", "replace_text"])
+def test_atomic_overwrite_preserves_existing_permission_mode(
+    runtime, tmp_path, action_kind
+):
+    target = tmp_path / "script.py"
+    target.write_text("before", encoding="utf-8")
+    target.chmod(0o751)
+    arguments = {"path": "script.py", "content": "after"}
+    if action_kind == "replace_text":
+        arguments = {
+            "path": "script.py",
+            "old": "before",
+            "new": "after",
+            "count": 1,
+        }
+
+    result = runtime.execute(Action(kind=action_kind, arguments=arguments))
+
+    assert result.ok
+    assert stat.S_IMODE(target.stat().st_mode) == 0o751
