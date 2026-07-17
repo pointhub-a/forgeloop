@@ -1,0 +1,20 @@
+services:
+  forgeloop:
+    build:
+      context: .
+    image: forgeloop:local
+    init: true
+    read_only: true
+    ports:
+      - "127.0.0.1:8000:8000"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    volumes:
+      - forgeloop-workspace:/workspace
+      - forgeloop-data:/data
+      - forgeloop-secrets:/run/secrets:ro
+
+volumes:
+  forgeloop-workspace:
+  forgeloop-data:
+  forgeloop-secrets:

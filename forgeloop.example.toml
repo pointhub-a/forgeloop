@@ -1,0 +1,27 @@
+max_steps = 20
+max_validation_runs = 8
+wall_time_seconds = 900
+command_timeout_seconds = 60
+provider_timeout_seconds = 60
+max_output_bytes = 32768
+max_file_bytes = 1048576
+max_identical_failures = 2
+max_identical_actions = 3
+memory_recall_limit = 10
+memory_char_budget = 4096
+allowed_executables = ["python3", "pytest", "ruff", "mypy", "git"]
+approval_rule_ids = [
+  "command.recursive_delete",
+  "git.force_push",
+  "git.hard_reset",
+  "database.drop",
+  "privilege.escalation",
+  "permission.change",
+  "network.execute",
+]
+provider_base_url = "https://api.openai.com/v1/chat/completions"
+provider_model = "gpt-5.6-luna"
+
+[[validators]]
+argv = ["python3", "-m", "pytest", "-q"]
+timeout_seconds = 120

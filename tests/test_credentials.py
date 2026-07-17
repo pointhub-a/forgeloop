@@ -35,21 +35,21 @@ def fake_backend():
 
 def test_status_and_repr_never_reveal_secret(fake_backend):
     service = CredentialService(fake_backend)
-    service.set("openai", "sk-example-secret")
+    service.set("openai", "sk-unmistakably-fake-example")
 
     status = service.status("openai")
 
     assert status.configured
     assert status.provider == "openai"
     assert status.source == "memory"
-    assert "sk-example-secret" not in repr(status)
+    assert "sk-unmistakably-fake-example" not in repr(status)
 
 
 def test_service_gets_for_provider_and_clears_credential(fake_backend):
     service = CredentialService(fake_backend)
-    service.set("openai", "sk-example-secret")
+    service.set("openai", "sk-unmistakably-fake-example")
 
-    assert service.get_for_provider("openai") == "sk-example-secret"
+    assert service.get_for_provider("openai") == "sk-unmistakably-fake-example"
 
     service.clear("openai")
 
@@ -79,12 +79,13 @@ def test_service_treats_backend_whitespace_as_unconfigured(fake_backend):
 
 def test_redact_masks_registered_and_token_shaped_values():
     text = redact(
-        "Authorization: Bearer sk-example-secret; fallback sk-unregistered-token",
-        ["sk-example-secret"],
+        "Authorization: Bearer sk-unmistakably-fake-example; "
+        "fallback sk-unmistakably-fake-unregistered",
+        ["sk-unmistakably-fake-example"],
     )
 
     assert "secret" not in text
-    assert "sk-unregistered-token" not in text
+    assert "sk-unmistakably-fake-unregistered" not in text
     assert "[REDACTED]" in text
 
 
@@ -94,20 +95,20 @@ def test_redact_ignores_empty_registered_secret():
 
 def test_secret_file_backend_reads_owner_only_regular_file(tmp_path):
     path = tmp_path / "provider-secret"
-    path.write_text("sk-file-secret\n", encoding="utf-8")
+    path.write_text("sk-unmistakably-fake-file\n", encoding="utf-8")
     path.chmod(0o600)
     service = CredentialService(SecretFileBackend(path))
 
     assert service.status("openai").configured is True
     assert service.status("openai").source == "secret_file"
-    assert service.get_for_provider("openai") == "sk-file-secret"
+    assert service.get_for_provider("openai") == "sk-unmistakably-fake-file"
     assert service.get_for_provider("other") is None
 
 
 @pytest.mark.parametrize("mode", [0o640, 0o604, 0o666])
 def test_secret_file_backend_rejects_group_or_other_permissions(tmp_path, mode):
     path = tmp_path / "provider-secret"
-    path.write_text("sk-file-secret", encoding="utf-8")
+    path.write_text("sk-unmistakably-fake-file", encoding="utf-8")
     path.chmod(mode)
 
     with pytest.raises(ValueError, match="permission"):
@@ -125,7 +126,7 @@ def test_secret_file_backend_rejects_non_regular_file(tmp_path):
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unsupported")
 def test_secret_file_backend_rejects_symlink(tmp_path):
     target = tmp_path / "target"
-    target.write_text("sk-file-secret", encoding="utf-8")
+    target.write_text("sk-unmistakably-fake-file", encoding="utf-8")
     target.chmod(0o600)
     link = tmp_path / "provider-secret"
     link.symlink_to(target)
@@ -136,7 +137,7 @@ def test_secret_file_backend_rejects_symlink(tmp_path):
 
 def test_secret_file_backend_is_read_only(tmp_path):
     path = tmp_path / "provider-secret"
-    path.write_text("sk-file-secret", encoding="utf-8")
+    path.write_text("sk-unmistakably-fake-file", encoding="utf-8")
     path.chmod(0o600)
     service = CredentialService(SecretFileBackend(path))
 
@@ -166,9 +167,9 @@ def test_keyring_backend_delegates_to_keyring_library(monkeypatch):
     monkeypatch.setitem(sys.modules, "keyring", fake_keyring)
     service = CredentialService(KeyringBackend(service_name="test-forgeloop"))
 
-    service.set("openai", "sk-example-secret")
+    service.set("openai", "sk-unmistakably-fake-example")
     assert service.status("openai").configured is True
-    assert service.get_for_provider("openai") == "sk-example-secret"
+    assert service.get_for_provider("openai") == "sk-unmistakably-fake-example"
 
     service.clear("openai")
     assert service.status("openai").configured is False

@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 import getpass
 import ipaddress
 import json
+import os
 from pathlib import Path
 import secrets
 import sys
@@ -19,6 +20,7 @@ from forgeloop.credentials import (
     CredentialBackend,
     CredentialService,
     KeyringBackend,
+    SecretFileBackend,
     redact,
 )
 from forgeloop.demo import run_mechanism_demo
@@ -86,13 +88,20 @@ def _report_error(
     return 2
 
 
+def _default_credential_backend() -> CredentialBackend:
+    secret_file = os.environ.get("FORGELOOP_SECRET_FILE")
+    if secret_file:
+        return SecretFileBackend(secret_file, provider="openai")
+    return KeyringBackend()
+
+
 def _run_credentials(
     args: argparse.Namespace, backend: CredentialBackend | None
 ) -> int:
     registered_secrets: list[str] = []
     try:
         service = CredentialService(
-            backend if backend is not None else KeyringBackend()
+            backend if backend is not None else _default_credential_backend()
         )
         provider = args.provider
         if args.credential_command == "set":
@@ -213,7 +222,7 @@ def _run_serve(
         data_dir = args.data_dir.expanduser().resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
         credential_service = CredentialService(
-            backend if backend is not None else KeyringBackend()
+            backend if backend is not None else _default_credential_backend()
         )
         if args.provider == "openai":
             api_key = credential_service.get_for_provider("openai")

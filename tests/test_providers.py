@@ -92,7 +92,7 @@ def test_http_provider_sends_one_chat_completion_request_and_normalizes_roles():
     provider = OpenAICompatibleProvider(
         "https://provider.example/v1/chat/completions",
         "test-model",
-        "super-secret-key",
+        "unmistakably-fake-provider-key",
         17,
         opener=opener,
     )
@@ -110,7 +110,10 @@ def test_http_provider_sends_one_chat_completion_request_and_normalizes_roles():
     request, timeout = opened[0]
     assert timeout == 17
     assert request.full_url == "https://provider.example/v1/chat/completions"
-    assert request.get_header("Authorization") == "Bearer super-secret-key"
+    assert (
+        request.get_header("Authorization")
+        == "Bearer unmistakably-fake-provider-key"
+    )
     body = json.loads(request.data)
     assert body == {
         "model": "test-model",
@@ -131,7 +134,7 @@ def test_http_provider_sends_one_chat_completion_request_and_normalizes_roles():
 
 
 def test_http_provider_redacts_api_key_from_repr_and_errors():
-    api_key = "super-secret-key"
+    api_key = "unmistakably-fake-provider-key"
 
     def opener(request, *, timeout):
         raise URLError(f"failed while using {api_key}")

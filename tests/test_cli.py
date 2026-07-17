@@ -58,20 +58,22 @@ def test_demo_cli_prints_machine_readable_summary(capsys) -> None:
 def test_credentials_set_uses_hidden_input(
     monkeypatch, fake_backend: FakeCredentialBackend, capsys
 ) -> None:
-    monkeypatch.setattr(getpass, "getpass", lambda _prompt: "sk-input-secret")
+    monkeypatch.setattr(
+        getpass, "getpass", lambda _prompt: "sk-unmistakably-fake-input"
+    )
 
     assert main(
         ["credentials", "set", "openai"], backend=fake_backend
     ) == 0
 
-    assert fake_backend.values == {"openai": "sk-input-secret"}
-    assert "sk-input-secret" not in capsys.readouterr().out
+    assert fake_backend.values == {"openai": "sk-unmistakably-fake-input"}
+    assert "sk-unmistakably-fake-input" not in capsys.readouterr().out
 
 
 def test_credentials_status_and_clear_never_reveal_secret(
     fake_backend: FakeCredentialBackend, capsys
 ) -> None:
-    fake_backend.values["openai"] = "sk-never-print-this"
+    fake_backend.values["openai"] = "sk-unmistakably-fake-never-print"
 
     assert main(
         ["credentials", "status", "openai"], backend=fake_backend
@@ -79,14 +81,14 @@ def test_credentials_status_and_clear_never_reveal_secret(
     status_output = capsys.readouterr().out
     assert "configured" in status_output
     assert "memory" in status_output
-    assert "sk-never-print-this" not in status_output
+    assert "sk-unmistakably-fake-never-print" not in status_output
 
     assert main(
         ["credentials", "clear", "openai"], backend=fake_backend
     ) == 0
     clear_output = capsys.readouterr().out
     assert "cleared" in clear_output
-    assert "sk-never-print-this" not in clear_output
+    assert "sk-unmistakably-fake-never-print" not in clear_output
     assert fake_backend.values == {}
 
 
@@ -211,6 +213,22 @@ def test_serve_openai_fails_clearly_without_credential(
     assert "credential" in capsys.readouterr().err.lower()
 
 
+def test_default_backend_reads_openai_credential_from_secret_file_environment(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    secret_file = tmp_path / "openai-key"
+    secret_file.write_text("ordinary-provider-credential\n", encoding="utf-8")
+    secret_file.chmod(0o600)
+    monkeypatch.setenv("FORGELOOP_SECRET_FILE", str(secret_file))
+
+    assert main(["credentials", "status", "openai"]) == 0
+
+    output = capsys.readouterr().out
+    assert "configured" in output
+    assert "secret_file" in output
+    assert "ordinary-provider-credential" not in output
+
+
 def test_serve_redacts_credential_backend_error(
     tmp_path: Path, capsys
 ) -> None:
@@ -232,7 +250,7 @@ def test_serve_openai_uses_injected_opener_without_network(
     tmp_path: Path, fake_backend: FakeCredentialBackend
 ) -> None:
     runner = CapturingRunner()
-    fake_backend.values["openai"] = "sk-provider-secret"
+    fake_backend.values["openai"] = "sk-unmistakably-fake-provider"
     requests = []
 
     class Response:

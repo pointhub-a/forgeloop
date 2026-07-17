@@ -150,12 +150,12 @@ def test_settings_never_returns_credential(
     credential_service: CredentialService,
     credential_backend: MemoryCredentialBackend,
 ) -> None:
-    credential_service.set("demo", "sk-never-render-this")
+    credential_service.set("demo", "sk-unmistakably-fake-never-render")
 
     response = client.get("/settings")
 
     assert response.status_code == 200
-    assert "sk-never-render-this" not in response.text
+    assert "sk-unmistakably-fake-never-render" not in response.text
     assert "已配置" in response.text
     assert "demo" in response.text
     assert credential_backend.reads == ["demo"]
@@ -381,7 +381,7 @@ def test_credential_api_exposes_only_status_metadata(
     assert initial.status_code == 200
     assert initial.json() == {"configured": False, "source": "memory"}
 
-    secret = "sk-never-return-this-value"
+    secret = "sk-unmistakably-fake-never-return"
     configured = client.put(
         "/api/credentials/demo", json={"secret": secret}
     )
@@ -485,7 +485,7 @@ def test_browser_approval_and_settings_forms_use_csrf(
 
     settings = client.get("/settings")
     settings_token = csrf_token(settings)
-    secret = "sk-browser-only-secret"
+    secret = "sk-unmistakably-fake-browser-only"
     configured = client.post(
         "/settings/credentials/demo",
         data={"_csrf": settings_token, "secret": secret},
@@ -521,7 +521,7 @@ def test_demo_runs_only_from_csrf_protected_form(client: TestClient) -> None:
 def test_internal_errors_never_disclose_exception_or_secret(
     client: TestClient, credential_backend: MemoryCredentialBackend
 ) -> None:
-    secret = "sk-backend-failure-secret"
+    secret = "sk-unmistakably-fake-backend-failure"
     credential_backend.failure = secret
 
     response = client.get("/api/credentials/demo")
@@ -538,7 +538,11 @@ def test_credential_api_rejects_provider_mismatch(
     credential_backend: MemoryCredentialBackend,
     method: str,
 ) -> None:
-    kwargs = {"json": {"secret": "sk-must-not-be-stored"}} if method == "put" else {}
+    kwargs = (
+        {"json": {"secret": "sk-unmistakably-fake-not-stored"}}
+        if method == "put"
+        else {}
+    )
 
     response = getattr(client, method)("/api/credentials/openai", **kwargs)
 
@@ -557,7 +561,7 @@ def test_settings_form_rejects_provider_mismatch(
     credential_backend.reads.clear()
     fields = {"_csrf": token}
     if not suffix:
-        fields["secret"] = "sk-must-not-be-stored"
+        fields["secret"] = "sk-unmistakably-fake-not-stored"
 
     response = client.post(f"/settings/credentials/openai{suffix}", data=fields)
 

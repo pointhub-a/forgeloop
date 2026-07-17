@@ -102,7 +102,7 @@ def test_upsert_rejects_credential_shaped_keys(store, key):
 def test_upsert_rejects_token_shaped_value_without_persisting(tmp_path):
     database = tmp_path / "memory.sqlite3"
     store = MemoryStore(database)
-    fake_token = "sk-example-secret"
+    fake_token = "sk-unmistakably-fake-memory"
 
     with pytest.raises(ValueError, match="sensitive"):
         store.upsert("project", "provider note", fake_token, ["python"])
