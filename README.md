@@ -68,14 +68,42 @@ docker compose up --build
 ```bash
 mkdir -p "$HOME/.config/forgeloop" "$PWD/.forgeloop-data" "$PWD/workspace"
 chmod 700 "$HOME/.config/forgeloop" "$PWD/.forgeloop-data" "$PWD/workspace"
-umask 077
 secret_path="$HOME/.config/forgeloop/openai-key"
-temporary_path="$(mktemp "${secret_path}.XXXXXX")"
-read -rsp 'OpenAI API key: ' FORGELOOP_INPUT && printf '\n'
-printf '%s' "$FORGELOOP_INPUT" > "$temporary_path"
-chmod 600 "$temporary_path"
-mv -f "$temporary_path" "$secret_path"
-unset FORGELOOP_INPUT temporary_path
+SECRET_PATH="$secret_path" python3 - <<'PY'
+import getpass
+import os
+from pathlib import Path
+
+secret_path = Path(os.environ["SECRET_PATH"])
+temporary_path = secret_path.with_name(
+    f".{secret_path.name}.{os.getpid()}.tmp"
+)
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+flags |= getattr(os, "O_CLOEXEC", 0)
+flags |= getattr(os, "O_NOFOLLOW", 0)
+secret = getpass.getpass("OpenAI API key: ")
+if not secret.strip():
+    raise SystemExit("Credential must not be empty.")
+
+descriptor = os.open(temporary_path, flags, 0o600)
+try:
+    os.fchmod(descriptor, 0o600)
+    secret_file = os.fdopen(descriptor, "w", encoding="utf-8")
+    descriptor = -1
+    with secret_file:
+        secret_file.write(secret)
+    os.replace(temporary_path, secret_path)
+except BaseException:
+    if descriptor >= 0:
+        os.close(descriptor)
+    try:
+        temporary_path.unlink()
+    except FileNotFoundError:
+        pass
+    raise
+finally:
+    secret = ""
+PY
 docker run --rm --name forgeloop-openai \
   --user "$(id -u):$(id -g)" \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
@@ -90,7 +118,7 @@ docker run --rm --name forgeloop-openai \
     --data-dir /data
 ```
 
-Linux Docker Engine 可直接使用上述 UID 映射；Docker Desktop 的文件共享层也必须允许这些路径。要轮换文件凭据，停止服务，用同样的隐藏输入流程原子替换该 `0600` 文件，再重启；secret-file 后端本身是只读的，`credentials set/clear` 会拒绝修改。
+以上 Python `getpass` heredoc 在 Bash/Zsh 下都从 TTY 隐藏读取，Key 不进入命令参数、shell history 或环境变量；环境中的 `SECRET_PATH` 仍只是一条路径。Linux Docker Engine 可直接使用上述 UID 映射；Docker Desktop 的文件共享层也必须允许这些路径。要轮换文件凭据，停止服务，用同样流程原子替换该 `0600` 文件，再重启；secret-file 后端本身是只读的，`credentials set/clear` 会拒绝修改。
 
 ## 目录结构
 

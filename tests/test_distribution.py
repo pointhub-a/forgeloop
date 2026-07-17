@@ -1,3 +1,4 @@
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -30,10 +31,29 @@ def test_gitlab_ci_defines_top_level_unit_test_job() -> None:
     assert "python3 -m pytest -q" in pipeline
 
 
-def test_dockerfile_runs_as_unprivileged_user() -> None:
+def test_dockerfile_has_complete_runtime_security_contract() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
+    assert re.search(
+        r"(?m)^FROM\s+python:3\.12-slim\s+AS\s+builder\s*$", dockerfile
+    )
+    assert len(re.findall(r"(?m)^FROM\s+python:3\.12-slim\b", dockerfile)) == 2
+    assert "python3 -m pip install /wheels/*.whl" in dockerfile
     assert re.search(r"(?m)^USER\s+forgeloop\s*$", dockerfile)
+    assert 'VOLUME ["/workspace", "/data", "/run/secrets"]' in dockerfile
+    assert "HEALTHCHECK" in dockerfile
+    assert "/healthz" in dockerfile
+
+    command_match = re.search(r"(?m)^CMD\s+(\[.*\])\s*$", dockerfile)
+    assert command_match is not None
+    command = json.loads(command_match.group(1))
+    assert "--allow-remote" in command
+    allowed_hosts = {
+        command[index + 1]
+        for index, argument in enumerate(command[:-1])
+        if argument == "--allowed-host"
+    }
+    assert {"localhost", "127.0.0.1"} <= allowed_hosts
 
 
 def test_readme_has_required_course_sections() -> None:
@@ -49,3 +69,13 @@ def test_readme_has_required_course_sections() -> None:
         "已知限制",
     ):
         assert re.search(rf"(?m)^## {re.escape(heading)}\s*$", readme)
+
+
+def test_readme_uses_cross_shell_hidden_secret_file_setup() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "read -rsp" not in readme
+    assert "getpass.getpass" in readme
+    assert "os.open" in readme
+    assert "0o600" in readme
+    assert "os.fchmod" in readme
