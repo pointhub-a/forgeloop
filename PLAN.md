@@ -334,12 +334,15 @@ Create schema on initialization; use `(project_id, key)` primary key; encode sor
 ```python
 def test_status_and_repr_never_reveal_secret(fake_backend):
     service = CredentialService(fake_backend)
-    service.set("openai", "sk-example-secret")
+    service.set("openai", "sk-unmistakably-fake-example")
     assert service.status("openai").configured
-    assert "sk-example-secret" not in repr(service.status("openai"))
+    assert "sk-unmistakably-fake-example" not in repr(service.status("openai"))
 
 def test_redact_masks_registered_and_token_shaped_values():
-    text = redact("Authorization: Bearer sk-example-secret", ["sk-example-secret"])
+    text = redact(
+        "Authorization: Bearer sk-unmistakably-fake-example",
+        ["sk-unmistakably-fake-example"],
+    )
     assert "secret" not in text
     assert "[REDACTED]" in text
 ```
@@ -529,9 +532,9 @@ def test_home_explains_product_and_security_boundary(client):
     assert "工作区" in response.text
 
 def test_settings_never_returns_credential(client, credential_service):
-    credential_service.set("openai", "sk-never-render-this")
+    credential_service.set("openai", "sk-unmistakably-fake-never-render")
     response = client.get("/settings")
-    assert "sk-never-render-this" not in response.text
+    assert "sk-unmistakably-fake-never-render" not in response.text
     assert "已配置" in response.text
 ```
 
@@ -628,6 +631,8 @@ Commit: `feat: add deterministic mechanism demo and CLI [agent: delegated-worker
 
 ### Task 10: Distribution, CI, Cold-Start Documentation, and Final QA
 
+**Status:** Delivered — commit `70ff745`; spec-compliance self-review PASS; quality/security self-review PASS. Docker build/health smoke remains unrun locally because no Docker-compatible executable is installed.
+
 **Files:**
 - Modify: `pyproject.toml`
 - Modify: `src/forgeloop/cli.py`
@@ -649,23 +654,23 @@ Commit: `feat: add deterministic mechanism demo and CLI [agent: delegated-worker
 
 Add `build>=1.2,<2` to dev dependencies. CLI default backend checks `FORGELOOP_SECRET_FILE`: when set, use a read-only `SecretFileBackend` for provider `openai`; otherwise use `KeyringBackend`. This environment variable is a path, never the secret itself. Docker/Compose run demo mode without a key; documented real mode mounts an owner-only secret at `/run/secrets/forgeloop_api_key` and sets only the path variable.
 
-- [ ] **Step 1: Write packaging smoke test before container files**
+- [x] **Step 1: Write packaging smoke test before container files**
 
 Add `tests/test_distribution.py` asserting the example TOML loads, package metadata exposes the CLI, `.gitlab-ci.yml` has a top-level `unit-test` job, Dockerfile runs as non-root, and README contains exact required headings: 项目简介、安装与运行、分发、目录结构、凭据安全、安全边界、已知限制。
 
-- [ ] **Step 2: Observe red and add distribution files**
+- [x] **Step 2: Observe red and add distribution files**
 
 Use a multi-stage `python:3.12-slim` build; create an unprivileged `forgeloop` user; install the wheel; set read-only source layers; mount `/workspace`, `/data`, and `/run/secrets`; expose 8000; healthcheck `/healthz`. Default command binds `0.0.0.0` with remote mode and concrete allowed hosts `localhost`/`127.0.0.1`. GitLab stages run `python3 -m pytest -q` in job exactly named `unit-test`, then build the image in `container-build`.
 
-- [ ] **Step 3: Write complete README and example configuration**
+- [x] **Step 3: Write complete README and example configuration**
 
 Document native and Docker cold starts, Keychain lifecycle, secret-file mount, `.env` risk, Mock demo, real provider opt-in, WebUI, architecture, security guarantees/non-guarantees, supported platforms and troubleshooting. Include copy-paste commands whose paths match the repository.
 
-- [ ] **Step 4: Complete process evidence without fabricating human reflection**
+- [x] **Step 4: Complete process evidence without fabricating human reflection**
 
 Update AGENT_LOG with each red/green result, subagent identifier, review outcome, commit hash and manual changes. Add cold-start findings and before/after SPEC/PLAN diffs to SPEC_PROCESS. Create `REFLECTION.md` as a clearly labeled student-authored worksheet with section prompts and evidence links; do not generate the required personal 1500–2500-word reflection on the student's behalf.
 
-- [ ] **Step 5: Run the full local quality gate**
+- [x] **Step 5: Run the full local quality gate**
 
 Run: `make test`
 Expected: all tests pass offline.
@@ -676,18 +681,20 @@ Expected: wheel and source distribution created.
 
 - [ ] **Step 6: Build and smoke-test the container**
 
+Local attempt: `docker version` and `docker compose config` both returned exit 127 (`docker: command not found`); `podman`, `buildah`, and `nerdctl` were also absent. Static Docker/Compose contract checks passed, but they do not substitute for image build or HTTP smoke. Run this step on the final Docker-enabled target.
+
 Run: `docker build -t forgeloop:local .`
 Expected: image builds successfully.
 Run the image with a temporary data mount and query `/healthz`; expect HTTP 200 without an API key.
 
-- [ ] **Step 7: Secret and placeholder audit**
+- [x] **Step 7: Secret and placeholder audit**
 
 Run repository searches for token-shaped strings, `.env`, absolute developer paths, `TODO`, `TBD`, skipped tests and debug prints. Any fixture token must use an unmistakable fake form and be filtered from outputs. Run `git status --short` and ensure every deliverable is tracked.
 
-- [ ] **Step 8: Final reviews and commit**
+- [x] **Step 8: Final reviews and commit**
 
 Perform spec-compliance review, then code-quality/security review. Resolve all Critical and Important findings.
-Commit: `docs: complete ForgeLoop delivery and verification [agent: delegated-worker]`.
+Commit: `docs: complete ForgeLoop delivery and verification [agent: Codex Task Agent]` (`70ff745`).
 Update each completed PLAN task with its commit hash.
 
 ## Plan Self-Review

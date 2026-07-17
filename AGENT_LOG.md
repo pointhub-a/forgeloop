@@ -122,3 +122,17 @@
 - 技能：`sites:sites-hosting`。
 - 结论：Sites 要求 Cloudflare Workers 兼容输出；ForgeLoop 需要本地 shell、挂载工作区和 SQLite，不能安全发布到该运行时。
 - 决策：交付 Docker/OCI 部署；真实线上 URL 需使用者的容器平台账户，不能伪造。
+
+## 2026-07-17 — TASK-010
+
+- 技能：Superpowers `test-driven-development`、`writing-plans`（执行已批准的 Task10 brief）、`openai-docs`；实现者 `/root/task10_distribution_docs`，提交作者 `Codex Task Agent`。
+- 上下文：严格按 `.superpowers/sdd/task-10-brief.md`，不重新 brainstorming、不派生 Agent。使用者明确禁止代写学生 1500–2500 字反思，因此 `REFLECTION.md` 仅包含学生本人填写的问题工作表与证据索引。
+- RED：新增 distribution 与 `FORGELOOP_SECRET_FILE` 默认后端测试后，focused 命令得到 6 failed；缺口分别是 example/CI/Dockerfile/README/build dev 依赖不存在，以及 CLI 仍选择 Keyring。
+- GREEN：最小实现后 6 focused passed；CLI/credentials/distribution 回归 40 passed；最终 `make test` 为 249 passed，`pip check` 与 `compileall` 通过。
+- 分发：`python3 -m build` 成功生成 `forgeloop-0.1.0.tar.gz` 和 `forgeloop-0.1.0-py3-none-any.whl`；wheel 检查确认 CLI entry point、Jinja templates 和静态资源存在。GitLab/Compose YAML 可解析，静态合同检查通过。
+- 文档来源：当前会话未热加载 OpenAI Developer Docs MCP；按技能流程已把官方 MCP endpoint 注册到 Codex 全局配置供后续会话使用，本次则回退到 OpenAI 官方模型目录与 GPT-5.6 Luna 页面。GitLab DinD 的 `DOCKER_HOST`/TLS 配置按 GitLab 官方 Docker build 文档复核。
+- Docker 限制：`docker version`、`docker compose config` 均 exit 127（`docker: command not found`）；`podman`、`buildah`、`nerdctl`、`hadolint` 也不存在。因此未声称 image build 或 `/healthz` 容器 smoke 通过，需所有者在 Docker-enabled runner/目标机完成。
+- 审计：当前 token-shaped fixtures 全部统一为 `sk-unmistakably-fake-*`/`Bearer unmistakably-fake-*`，相关不泄漏断言未删除；Git 历史命中项均为命名明确的测试假值。未发现实际 `.env`、tracked 绝对开发机路径、未条件化 skipped test 或 debug breakpoint；PLAN 中 `TODO`/`TBD` 仅出现在审计指令，三个 `skipif` 均为平台能力守卫。
+- 评审：因使用者明确“不派生 agent”，未派 reviewer；实现者依次完成 spec 合规自审与代码质量/安全自审，无 Critical/Important 遗留。该流程偏离按事实记录，不伪造外部 review。
+- 提交：`70ff745`（`docs: complete ForgeLoop delivery and verification [agent: Codex Task Agent]`）。人工变更：本 task 内无学生手写代码；使用者只规定执行边界、作者身份与反思不得代写。
+- 外部待办：最终 GitLab CI pass、registry push、线上 URL、不同类型 Agent 冷启动复核与学生本人反思仍需要仓库所有者账户/本人完成。

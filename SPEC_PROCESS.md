@@ -55,3 +55,40 @@ AI 提出并采用：反馈指纹、无进展检测、动作绑定审批、工�
 修订后：SPEC §5.7 给出 16 个配置字段及精确类型/默认值；计划逐项复制这些值；裸机命令统一使用 `python3`。
 
 冷启动分支未合并，因为其作用是验证规约，而不是提供正式实现。
+
+### 冷启动证据对应的关键修订 diff
+
+以下摘录来自修订提交 `e267d31`，只保留由冷启动发现直接触发的行。第一次 Agent 的流程阻塞使 PLAN 增加了执行入口约束：
+
+```diff
+ ## Global Constraints
++- `SPEC.md` is approved; implementation agents start at their assigned task and must not restart brainstorming.
++- Native commands use `python3`; do not assume the host defines a `python` alias.
+```
+
+第二次 Agent 的 `python: command not found` 使 PLAN 的命令前提从隐含变为显式；同一修改覆盖全部 task，代表性片段为：
+
+```diff
+-Run: `python -m pytest tests/test_models.py -q`
++Run: `python3 -m pytest tests/test_models.py -q`
+```
+
+第二次 Agent 因 schema 无法执行而暂停，使 SPEC 从配置类别描述变为精确公共契约：
+
+```diff
+-使用 TOML，配置：工作区根、最大步骤、超时、输出上限、允许可执行程序、危险规则、验证命令、记忆预算和 Provider 端点。API Key 不得出现在 TOML 中。
++使用 TOML。`HarnessConfig` 的字段、类型和默认值固定如下：
++| `max_steps` | 正整数 | `20` |
++| `command_timeout_seconds` | 1–120 的整数 | `60` |
++| `validators` | `ValidatorConfig` 列表 | 空列表 |
++| `provider_base_url` | HTTPS URL | `https://api.openai.com/v1/chat/completions` |
+```
+
+PLAN 因此不再要求执行者“从 SPEC 猜字段”，而逐项复制已定义的 16 个字段、类型和默认值：
+
+```diff
+-Use `tomllib`; define `ValidatorConfig(argv: list[str], timeout_seconds: int)` and `HarnessConfig` fields copied from SPEC.
++Use `tomllib`; define `ValidatorConfig(argv: list[str], timeout_seconds: int = 60)`. Define every `HarnessConfig` field with the exact type and default from SPEC §5.7.
+```
+
+这些修改的后续证据是 Task 1 在相同仓库中按 `python3`/Python 3.12 环境完成 30 个测试，并让后续模块共享同一严格配置类型。仍未补齐的课程要求是“不同类型 Agent”冷启动：两次尝试都是全新 Codex 会话，原因是当时机器只有该客户端；该限制不能被后续实现测试替代。
