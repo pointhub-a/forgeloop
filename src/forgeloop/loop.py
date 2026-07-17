@@ -205,6 +205,12 @@ class AgentLoop:
                 "Action denied by policy.",
                 {"status": state.status.value, "rule_id": decision.rule_id},
             )
+            state.status = TaskStatus.RUNNING
+            self._event(
+                EventKind.STATE,
+                "Task resumed after policy denial.",
+                {"status": state.status.value, "reason": "policy_denial"},
+            )
         else:
             validation_no_progress = self._execute(action)
 
@@ -341,12 +347,7 @@ class AgentLoop:
             reports = self.validators.run_all()
             state.validation_count += 1
             state.last_validation_passed = all_validations_passed(reports)
-            no_progress = False
-            for report in reports:
-                no_progress = (
-                    self.progress.observe_validation(report).should_stop
-                    or no_progress
-                )
+            no_progress = self.progress.observe_validation_run(reports).should_stop
             self._message(
                 "feedback",
                 {
@@ -404,13 +405,17 @@ class AgentLoop:
         if action.kind.value == "recall":
             arguments = action.arguments
             tags = arguments.get("tags")
+            requested_limit = arguments.get("limit")
             if (
-                set(arguments) != {"tags"}
+                set(arguments) != {"tags", "limit"}
                 or not isinstance(tags, list)
                 or any(not isinstance(tag, str) or not tag for tag in tags)
+                or not isinstance(requested_limit, int)
+                or isinstance(requested_limit, bool)
+                or requested_limit < 1
             ):
                 self._memory_failure(
-                    action, "recall requires exactly one string tag array."
+                    action, "recall requires a string tag array and positive limit."
                 )
                 return False
             state.tool_calls.append(action)
@@ -418,7 +423,7 @@ class AgentLoop:
                 records = self.memory.recall(
                     self.project_id,
                     tags,
-                    self.config.memory_recall_limit,
+                    min(requested_limit, self.config.memory_recall_limit),
                     self.config.memory_char_budget,
                 )
             except (sqlite3.Error, OSError):

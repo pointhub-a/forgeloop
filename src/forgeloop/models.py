@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from enum import Enum
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ActionKind(str, Enum):
@@ -69,6 +70,75 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
+class StrictArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+PathArgument = Annotated[
+    str, Field(min_length=1, max_length=4096, pattern=r"^[^\x00]+$")
+]
+TextArgument = Annotated[str, Field(max_length=16 * 1024 * 1024)]
+NonEmptyTextArgument = Annotated[
+    str, Field(min_length=1, max_length=16 * 1024 * 1024)
+]
+CommandArgument = Annotated[
+    str, Field(min_length=1, max_length=32768, pattern=r"^[^\x00]+$")
+]
+TagArgument = Annotated[str, Field(min_length=1, max_length=128)]
+
+
+class ReadFileArguments(StrictArguments):
+    path: PathArgument
+
+
+class WriteFileArguments(StrictArguments):
+    path: PathArgument
+    content: TextArgument
+
+
+class ReplaceTextArguments(StrictArguments):
+    path: PathArgument
+    old: NonEmptyTextArgument
+    new: TextArgument
+    count: int = Field(ge=1, le=1_000_000)
+
+
+class RunCommandArguments(StrictArguments):
+    argv: Annotated[list[CommandArgument], Field(min_length=1, max_length=256)]
+    timeout_seconds: int = Field(ge=1, le=120)
+
+
+class RunValidationArguments(StrictArguments):
+    pass
+
+
+class RememberArguments(StrictArguments):
+    key: Annotated[str, Field(min_length=1, max_length=256)]
+    value: TextArgument
+    tags: Annotated[list[TagArgument], Field(min_length=1, max_length=64)]
+
+
+class RecallArguments(StrictArguments):
+    tags: Annotated[list[TagArgument], Field(min_length=1, max_length=64)]
+    limit: int = Field(ge=1, le=1000)
+
+
+class FinishArguments(StrictArguments):
+    summary: Annotated[str, Field(min_length=1, max_length=32768)]
+
+
+_ACTION_ARGUMENT_MODELS: dict[ActionKind, type[StrictArguments]] = {
+    ActionKind.READ_FILE: ReadFileArguments,
+    ActionKind.WRITE_FILE: WriteFileArguments,
+    ActionKind.REPLACE_TEXT: ReplaceTextArguments,
+    ActionKind.RUN_COMMAND: RunCommandArguments,
+    ActionKind.RUN_VALIDATION: RunValidationArguments,
+    ActionKind.REMEMBER: RememberArguments,
+    ActionKind.RECALL: RecallArguments,
+    ActionKind.FINISH: FinishArguments,
+}
+
+
 def _validate_json_object(value: dict[str, object]) -> dict[str, object]:
     def require_string_keys(item: object) -> None:
         if isinstance(item, dict):
@@ -93,6 +163,34 @@ class Action(StrictModel):
     arguments: dict[str, object]
 
     _json_arguments = field_validator("arguments")(_validate_json_object)
+
+    @model_validator(mode="after")
+    def arguments_match_kind(self) -> Action:
+        _ACTION_ARGUMENT_MODELS[self.kind].model_validate(self.arguments)
+        return self
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs) -> dict[str, object]:
+        """Advertise the exact kind-discriminated action surface to providers."""
+
+        branches = []
+        for kind, arguments_model in _ACTION_ARGUMENT_MODELS.items():
+            branches.append(
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["kind", "arguments"],
+                    "properties": {
+                        "kind": {"type": "string", "const": kind.value},
+                        "arguments": arguments_model.model_json_schema(),
+                    },
+                }
+            )
+        return {
+            "title": "ForgeLoopAction",
+            "oneOf": branches,
+            "discriminator": {"propertyName": "kind"},
+        }
 
 
 class ToolResult(StrictModel):

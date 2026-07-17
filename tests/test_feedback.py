@@ -51,6 +51,26 @@ def test_report_fingerprint_normalizes_volatile_failure_output():
     assert report_fingerprint(first) == report_fingerprint(second)
 
 
+def test_report_fingerprint_ignores_different_prefixes_beyond_bounded_tail():
+    common_tail = "same-tail " * 1000
+    first = ValidationReport.failed(
+        ["pytest"],
+        1,
+        1,
+        stderr="A" * 9000 + common_tail,
+        classification=FailureClass.TEST_FAILURE,
+    )
+    second = ValidationReport.failed(
+        ["pytest"],
+        1,
+        1,
+        stderr="B" * 9000 + common_tail,
+        classification=FailureClass.TEST_FAILURE,
+    )
+
+    assert report_fingerprint(first) == report_fingerprint(second)
+
+
 @pytest.mark.parametrize(
     ("stderr", "expected"),
     [
@@ -90,6 +110,26 @@ def test_repeated_failed_fingerprint_stops_progress():
 
     assert state.should_stop is True
     assert state.reason == "no_progress"
+
+
+def test_different_failure_resets_consecutive_failure_progress():
+    tracker = ProgressTracker(max_identical_failures=3, max_identical_actions=3)
+
+    def report(fingerprint):
+        return ValidationReport.failed(
+            ["pytest"],
+            1,
+            1,
+            classification=FailureClass.TEST_FAILURE,
+            fingerprint=fingerprint,
+        )
+
+    assert tracker.observe_validation(report("A")).should_stop is False
+    assert tracker.observe_validation(report("A")).should_stop is False
+    assert tracker.observe_validation(report("B")).should_stop is False
+    assert tracker.observe_validation(report("A")).should_stop is False
+    assert tracker.observe_validation(report("A")).should_stop is False
+    assert tracker.observe_validation(report("A")).should_stop is True
 
 
 def test_different_action_resets_repeated_action_progress():

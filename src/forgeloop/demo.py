@@ -40,6 +40,10 @@ class DemoResult(StrictModel):
 
 
 def _action(kind: str, **arguments: object) -> str:
+    if kind == "run_command":
+        arguments.setdefault("timeout_seconds", 60)
+    if kind == "recall":
+        arguments.setdefault("limit", 10)
     return json.dumps(
         {"kind": kind, "arguments": arguments},
         sort_keys=True,

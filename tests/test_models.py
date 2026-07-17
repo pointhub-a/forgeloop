@@ -57,6 +57,91 @@ def test_action_rejects_unknown_fields():
         )
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"kind": "read_file", "arguments": {"path": "README.md"}},
+        {
+            "kind": "write_file",
+            "arguments": {"path": "note.txt", "content": "hello"},
+        },
+        {
+            "kind": "replace_text",
+            "arguments": {
+                "path": "note.txt",
+                "old": "hello",
+                "new": "hi",
+                "count": 1,
+            },
+        },
+        {
+            "kind": "run_command",
+            "arguments": {"argv": ["pytest", "-q"], "timeout_seconds": 60},
+        },
+        {"kind": "run_validation", "arguments": {}},
+        {
+            "kind": "remember",
+            "arguments": {"key": "style", "value": "ruff", "tags": ["python"]},
+        },
+        {"kind": "recall", "arguments": {"tags": ["python"], "limit": 5}},
+        {"kind": "finish", "arguments": {"summary": "complete"}},
+    ],
+)
+def test_action_accepts_each_exact_argument_shape(payload):
+    assert Action.model_validate(payload).model_dump(mode="json") == payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "kind": "read_file",
+            "arguments": {"path": "README.md", "content": "extra"},
+        },
+        {"kind": "read_file", "arguments": {"path": "bad\x00path"}},
+        {"kind": "write_file", "arguments": {"path": "note.txt"}},
+        {
+            "kind": "replace_text",
+            "arguments": {"path": "a", "old": "x", "new": "y", "count": 0},
+        },
+        {
+            "kind": "run_command",
+            "arguments": {"argv": [], "timeout_seconds": 60},
+        },
+        {
+            "kind": "run_command",
+            "arguments": {"argv": ["pytest"], "timeout_seconds": 121},
+        },
+        {
+            "kind": "run_command",
+            "arguments": {"argv": ["bad\x00command"], "timeout_seconds": 60},
+        },
+        {"kind": "run_validation", "arguments": {"unexpected": True}},
+        {"kind": "remember", "arguments": {"key": "k", "value": "v", "tags": []}},
+        {"kind": "recall", "arguments": {"tags": ["python"]}},
+        {"kind": "recall", "arguments": {"tags": ["python"], "limit": 0}},
+        {"kind": "finish", "arguments": {"summary": ""}},
+    ],
+)
+def test_action_rejects_unknown_missing_or_out_of_range_arguments(payload):
+    with pytest.raises(ValidationError):
+        Action.model_validate(payload)
+
+
+def test_action_json_schema_is_a_strict_discriminated_union():
+    schema = Action.model_json_schema()
+
+    assert len(schema["oneOf"]) == len(ActionKind)
+    assert {branch["properties"]["kind"]["const"] for branch in schema["oneOf"]} == {
+        kind.value for kind in ActionKind
+    }
+    assert all(branch["additionalProperties"] is False for branch in schema["oneOf"])
+    assert all(
+        branch["properties"]["arguments"]["additionalProperties"] is False
+        for branch in schema["oneOf"]
+    )
+
+
 def test_tool_result_constructors_create_structured_outcomes():
     success = ToolResult.success("done", metadata={"path": "a.py"})
     failure = ToolResult.error("missing file", metadata={"path": "a.py"})

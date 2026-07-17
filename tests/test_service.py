@@ -25,6 +25,10 @@ from forgeloop.tools import ToolRuntime
 
 
 def action(kind, **arguments):
+    if kind == "run_command":
+        arguments.setdefault("timeout_seconds", 60)
+    if kind == "recall":
+        arguments.setdefault("limit", 10)
     return json.dumps({"kind": kind, "arguments": arguments})
 
 
@@ -281,6 +285,88 @@ def test_terminal_task_cannot_advance(repositories, tmp_path):
 
     assert loop.state.step_count == 0
     assert tasks.list_events(task.id) == events_before
+
+
+def test_denied_action_persists_audit_but_task_remains_advancable(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+    factory, _ = loop_factory_for(
+        [
+            action(
+                "run_command",
+                argv=["unknown-tool"],
+                timeout_seconds=60,
+            ),
+            action("read_file", path="note.txt"),
+        ]
+    )
+    service = TaskService(tasks, approvals, factory)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("safe", encoding="utf-8")
+    created = service.create("recover", workspace)
+
+    after_denial = service.advance(created.id)
+    after_correction = service.advance(created.id)
+
+    assert after_denial.status == "running"
+    assert tasks.get(created.id).status == "running"
+    assert after_correction.status == "running"
+    denied = [
+        event
+        for event in tasks.list_events(created.id)
+        if event.kind.value == "state" and event.data.get("status") == "denied"
+    ]
+    assert len(denied) == 1
+    assert denied[0].data["rule_id"] == "command.executable_not_allowed"
+
+
+def test_memory_actions_work_when_advanced_from_fastapi_worker_thread(
+    repositories, tmp_path
+):
+    tasks, approvals = repositories
+
+    def factory(workspace: Path, task_id: str):
+        config = HarnessConfig(max_steps=3)
+        return AgentLoop(
+            provider=ScriptedProvider(
+                [
+                    action(
+                        "remember",
+                        key="style",
+                        value="use ruff",
+                        tags=["python"],
+                    ),
+                    action("recall", tags=["python"], limit=5),
+                ]
+            ),
+            policy=PolicyEngine(config),
+            tools=ToolRuntime(workspace, config),
+            validators=NoValidators(),
+            progress=ProgressTracker(
+                max_identical_failures=config.max_identical_failures,
+                max_identical_actions=config.max_identical_actions,
+            ),
+            memory=MemoryStore(tmp_path / "memory.sqlite3"),
+            config=config,
+            project_id=task_id,
+        )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = TaskService(tasks, approvals, factory)
+    created = service.create("remember", workspace)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first = executor.submit(service.advance, created.id).result()
+        second = executor.submit(service.advance, created.id).result()
+
+    assert first.status == "running"
+    assert second.status == "running"
+    summaries = [event.summary for event in tasks.list_events(created.id)]
+    assert "Memory stored." in summaries
+    assert "Recalled 1 memory record(s)." in summaries
 
 
 @pytest.mark.parametrize("operation", ["advance", "approve", "reject", "cancel"])

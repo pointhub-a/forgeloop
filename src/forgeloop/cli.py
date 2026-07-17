@@ -150,7 +150,7 @@ def _loop_factory(
     opener: Callable[..., object] | None,
 ):
     demo_response = json.dumps(
-        {"kind": "recall", "arguments": {"tags": ["demo"]}},
+        {"kind": "recall", "arguments": {"tags": ["demo"], "limit": 10}},
         separators=(",", ":"),
         sort_keys=True,
     )

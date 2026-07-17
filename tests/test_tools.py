@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from forgeloop.config import HarnessConfig
-from forgeloop.models import Action
+from forgeloop.models import Action, ActionKind
 from forgeloop.tools import ToolRuntime
 
 
@@ -107,8 +107,8 @@ def test_read_requires_strict_utf8(runtime, tmp_path):
 
 def test_write_rejects_text_that_cannot_be_encoded_as_utf8(runtime, tmp_path):
     result = runtime.execute(
-        Action(
-            kind="write_file",
+        Action.model_construct(
+            kind=ActionKind.WRITE_FILE,
             arguments={"path": "invalid.txt", "content": "\ud800"},
         )
     )
@@ -176,7 +176,10 @@ def test_file_action_rejects_workspace_escape(runtime, tmp_path):
 
 
 def test_file_action_rejects_invalid_arguments(runtime):
-    result = runtime.execute(Action(kind="read_file", arguments={"path": 7}))
+    malformed = Action.model_construct(
+        kind=ActionKind.READ_FILE, arguments={"path": 7}
+    )
+    result = runtime.execute(malformed)
 
     assert not result.ok
     assert result.metadata["error_code"] == "invalid_arguments"
@@ -196,7 +199,8 @@ def test_command_uses_workspace_and_minimal_environment(
                 "import os; print(os.getcwd()); "
                 "print(os.getenv('OPENAI_API_KEY')); "
                 "print(os.getenv('FORGELOOP_TEST_SAFE'))",
-            ]
+            ],
+            "timeout_seconds": 60,
         },
     )
 
@@ -219,7 +223,8 @@ def test_command_timeout_returns_structured_error(short_timeout_runtime):
                     sys.executable,
                     "-c",
                     "import time; print('started', flush=True); time.sleep(2)",
-                ]
+                ],
+                "timeout_seconds": 60,
             },
         )
     )
@@ -270,7 +275,8 @@ def test_command_nonzero_exit_preserves_output_and_exit_code(runtime):
                     sys.executable,
                     "-c",
                     "import sys; print('failed'); sys.exit(7)",
-                ]
+                ],
+                "timeout_seconds": 60,
             },
         )
     )
@@ -290,7 +296,8 @@ def test_command_output_is_truncated_deterministically(small_output_runtime):
                     sys.executable,
                     "-c",
                     "import sys; sys.stdout.buffer.write(b'abcdefgh')",
-                ]
+                ],
+                "timeout_seconds": 60,
             },
         )
     )
@@ -314,7 +321,8 @@ def test_large_command_output_keeps_a_bounded_prefix_from_each_stream(
                     "chunk_out = b'O' * 65536; chunk_err = b'E' * 65536; "
                     "[sys.stdout.buffer.write(chunk_out) for _ in range(64)]; "
                     "[sys.stderr.buffer.write(chunk_err) for _ in range(64)]",
-                ]
+                ],
+                "timeout_seconds": 60,
             },
         )
     )
@@ -334,7 +342,8 @@ def test_large_command_output_does_not_scale_parent_python_memory(tmp_path):
                 "-c",
                 "import sys; chunk = b'x' * 65536; "
                 "[sys.stdout.buffer.write(chunk) for _ in range(128)]",
-            ]
+            ],
+            "timeout_seconds": 60,
         },
     )
 
@@ -359,7 +368,8 @@ def test_command_output_decodes_invalid_utf8_with_replacement(runtime):
                     sys.executable,
                     "-c",
                     "import sys; sys.stdout.buffer.write(bytes([255]))",
-                ]
+                ],
+                "timeout_seconds": 60,
             },
         )
     )
@@ -386,7 +396,10 @@ def test_command_output_decodes_invalid_utf8_with_replacement(runtime):
     ],
 )
 def test_command_rejects_invalid_arguments(runtime, arguments):
-    result = runtime.execute(Action(kind="run_command", arguments=arguments))
+    malformed = Action.model_construct(
+        kind=ActionKind.RUN_COMMAND, arguments=arguments
+    )
+    result = runtime.execute(malformed)
 
     assert not result.ok
     assert result.metadata["error_code"] == "invalid_arguments"
@@ -396,7 +409,10 @@ def test_command_not_found_returns_structured_error(runtime, tmp_path):
     result = runtime.execute(
         Action(
             kind="run_command",
-            arguments={"argv": [str(tmp_path / "missing-command")]},
+            arguments={
+                "argv": [str(tmp_path / "missing-command")],
+                "timeout_seconds": 60,
+            },
         )
     )
 
@@ -431,7 +447,10 @@ def test_command_timeout_terminates_descendant_process(
     result = short_timeout_runtime.execute(
         Action(
             kind="run_command",
-            arguments={"argv": [sys.executable, "-c", parent_code]},
+            arguments={
+                "argv": [sys.executable, "-c", parent_code],
+                "timeout_seconds": 60,
+            },
         )
     )
 

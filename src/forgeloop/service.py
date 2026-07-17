@@ -27,7 +27,6 @@ class InvalidStateTransition(RuntimeError):
 
 LoopFactory = Callable[[Path, str], AgentLoop]
 _TERMINAL_STATUSES = {
-    TaskStatus.DENIED,
     TaskStatus.SUCCEEDED,
     TaskStatus.FAILED,
     TaskStatus.BUDGET_EXHAUSTED,

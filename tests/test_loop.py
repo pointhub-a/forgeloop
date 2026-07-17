@@ -14,6 +14,10 @@ from forgeloop.tools import ToolRuntime
 
 
 def action(kind, **arguments):
+    if kind == "run_command":
+        arguments.setdefault("timeout_seconds", 60)
+    if kind == "recall":
+        arguments.setdefault("limit", 10)
     return json.dumps({"kind": kind, "arguments": arguments})
 
 
@@ -112,6 +116,41 @@ def test_dangerous_action_pauses_before_tool_execution(tmp_path):
     assert result.pending_action is not None
 
 
+def test_policy_denial_is_audited_then_resumes_for_model_self_correction(tmp_path):
+    provider = ScriptedProvider(
+        [
+            action(
+                "run_command",
+                argv=["unknown-tool"],
+                timeout_seconds=60,
+            ),
+            action("run_validation"),
+            action("finish", summary="corrected"),
+        ]
+    )
+
+    result = make_loop(
+        tmp_path,
+        provider,
+        validation_results=[[passed()]],
+        max_steps=3,
+    ).run("recover from unsafe proposal")
+
+    assert result.status == "succeeded"
+    denied = [
+        event
+        for event in result.events
+        if event.kind.value == "state" and event.data.get("status") == "denied"
+    ]
+    assert len(denied) == 1
+    assert denied[0].data["rule_id"] == "command.executable_not_allowed"
+    assert any(
+        json.loads(message["content"]).get("type") == "policy_denial"
+        for message in provider.calls[1][0]
+        if message["role"] == "feedback"
+    )
+
+
 def test_finish_without_passing_validation_is_rejected(tmp_path):
     result = make_loop(
         tmp_path,
@@ -188,6 +227,28 @@ def test_parse_failure_is_feedback_until_step_budget_is_exhausted(tmp_path):
     assert invalid not in provider.calls[1][0][-1]["content"]
 
 
+def test_invalid_action_arguments_are_parse_feedback_and_count_as_a_step(tmp_path):
+    invalid = json.dumps(
+        {
+            "kind": "run_command",
+            "arguments": {"argv": ["pytest"], "timeout_seconds": 0},
+        }
+    )
+    provider = ScriptedProvider([invalid, action("run_validation")])
+
+    result = make_loop(
+        tmp_path,
+        provider,
+        validation_results=[[passed()]],
+        max_steps=2,
+    ).run("fix")
+
+    assert result.step_count == 2
+    assert result.validation_count == 1
+    feedback = json.loads(provider.calls[1][0][-1]["content"])
+    assert feedback["type"] == "action_parse_error"
+
+
 def test_provider_exhaustion_retries_safely_until_step_budget(tmp_path):
     provider = ScriptedProvider([])
 
@@ -220,6 +281,26 @@ def test_repeated_failed_validations_stop_for_no_progress(tmp_path):
         tmp_path,
         provider,
         validation_results=[[report], [report]],
+    ).run("fix")
+
+    assert result.status == "no_progress"
+    assert result.validation_count == 2
+
+
+def test_multi_validator_progress_is_observed_once_per_validation_run(tmp_path):
+    repeated_failure = failed("same failure")
+    provider = ScriptedProvider(
+        [action("run_validation"), action("run_validation")]
+    )
+
+    result = make_loop(
+        tmp_path,
+        provider,
+        validation_results=[
+            [repeated_failure, passed()],
+            [repeated_failure, passed()],
+        ],
+        max_steps=2,
     ).run("fix")
 
     assert result.status == "no_progress"

@@ -8,6 +8,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 
 from forgeloop.credentials import contains_token_shaped_secret
 
@@ -31,21 +32,35 @@ class MemoryStore:
     """Store and recall tagged memory without crossing project boundaries."""
 
     def __init__(self, database: str | Path) -> None:
-        self._connection = sqlite3.connect(str(database))
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS memories (
-                project_id TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                tags_json TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (project_id, key)
+        self._lock = RLock()
+        self._connection = sqlite3.connect(str(database), check_same_thread=False)
+        with self._lock:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memories (
+                    project_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    tags_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (project_id, key)
+                )
+                """
             )
-            """
-        )
-        self._connection.commit()
+            self._connection.commit()
+
+    def close(self) -> None:
+        """Close the serialized SQLite connection."""
+
+        with self._lock:
+            self._connection.close()
+
+    def __enter__(self) -> MemoryStore:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
 
     def upsert(
         self, project_id: str, key: str, value: str, tags: list[str]
@@ -61,20 +76,21 @@ class MemoryStore:
             sorted(set(tags)), ensure_ascii=False, separators=(",", ":")
         )
         timestamp = time.time_ns()
-        self._connection.execute(
-            """
-            INSERT INTO memories (
-                project_id, key, value, tags_json, created_at, updated_at
+        with self._lock:
+            self._connection.execute(
+                """
+                INSERT INTO memories (
+                    project_id, key, value, tags_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, key) DO UPDATE SET
+                    value = excluded.value,
+                    tags_json = excluded.tags_json,
+                    updated_at = excluded.updated_at
+                """,
+                (project_id, key, value, encoded_tags, timestamp, timestamp),
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(project_id, key) DO UPDATE SET
-                value = excluded.value,
-                tags_json = excluded.tags_json,
-                updated_at = excluded.updated_at
-            """,
-            (project_id, key, value, encoded_tags, timestamp, timestamp),
-        )
-        self._connection.commit()
+            self._connection.commit()
 
     def recall(
         self,
@@ -90,31 +106,39 @@ class MemoryStore:
 
         requested_tags = set(tags)
         matches: list[tuple[int, MemoryRecord]] = []
-        rows = self._connection.execute(
-            """
-            SELECT project_id, key, value, tags_json, created_at, updated_at
-            FROM memories
-            WHERE project_id = ?
-            """,
-            (project_id,),
-        )
-        for row_project_id, key, value, encoded_tags, created_at, updated_at in rows:
-            stored_tags = tuple(json.loads(encoded_tags))
-            overlap = len(requested_tags.intersection(stored_tags))
-            if overlap:
-                matches.append(
-                    (
-                        overlap,
-                        MemoryRecord(
-                            project_id=row_project_id,
-                            key=key,
-                            value=value,
-                            tags=stored_tags,
-                            created_at=created_at,
-                            updated_at=updated_at,
-                        ),
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT project_id, key, value, tags_json, created_at, updated_at
+                FROM memories
+                WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchall()
+            for (
+                row_project_id,
+                key,
+                value,
+                encoded_tags,
+                created_at,
+                updated_at,
+            ) in rows:
+                stored_tags = tuple(json.loads(encoded_tags))
+                overlap = len(requested_tags.intersection(stored_tags))
+                if overlap:
+                    matches.append(
+                        (
+                            overlap,
+                            MemoryRecord(
+                                project_id=row_project_id,
+                                key=key,
+                                value=value,
+                                tags=stored_tags,
+                                created_at=created_at,
+                                updated_at=updated_at,
+                            ),
+                        )
                     )
-                )
 
         matches.sort(
             key=lambda match: (-match[0], -match[1].updated_at, match[1].key)

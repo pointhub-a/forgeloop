@@ -41,6 +41,16 @@ def test_memory_persists_between_store_instances(tmp_path):
     assert [memory.value for memory in recalled] == ["use ruff"]
 
 
+def test_memory_store_context_manager_closes_connection(tmp_path):
+    database = tmp_path / "memory.sqlite3"
+
+    with MemoryStore(database) as store:
+        store.upsert("project", "style", "use ruff", ["python"])
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        store.recall("project", ["python"], limit=5, char_budget=100)
+
+
 def test_upsert_replaces_project_key_and_normalizes_tags(tmp_path):
     database = tmp_path / "memory.sqlite3"
     store = MemoryStore(database)

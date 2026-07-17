@@ -8,6 +8,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
 from forgeloop.config import ValidatorConfig
 from forgeloop.models import (
     Action,
@@ -124,15 +126,27 @@ class ValidatorRunner:
     def run_all(self) -> list[ValidationReport]:
         reports: list[ValidationReport] = []
         for validator in self.validators:
-            result = self.runtime.execute(
-                Action(
+            try:
+                action = Action(
                     kind="run_command",
                     arguments={
                         "argv": validator.argv,
                         "timeout_seconds": validator.timeout_seconds,
                     },
                 )
-            )
+            except ValidationError:
+                report = ValidationReport(
+                    argv=validator.argv,
+                    status=ValidationStatus.INFRA_ERROR,
+                    classification=FailureClass.INFRASTRUCTURE,
+                    exit_code=None,
+                    duration_ms=0,
+                    stderr="Validator configuration was rejected.",
+                )
+                report.fingerprint = report_fingerprint(report)
+                reports.append(report)
+                continue
+            result = self.runtime.execute(action)
             metadata = result.metadata
             exit_code = metadata.get("exit_code")
             duration_ms = metadata.get("duration_ms", 0)
@@ -222,12 +236,31 @@ class ProgressTracker:
         )
 
     def observe_validation(self, report: ValidationReport) -> ProgressState:
-        if report.status is ValidationStatus.PASSED:
+        return self.observe_validation_run([report])
+
+    def observe_validation_run(
+        self, reports: Sequence[ValidationReport]
+    ) -> ProgressState:
+        """Observe one ordered validation run as a single progress signal."""
+
+        failures = [
+            report for report in reports if report.status is not ValidationStatus.PASSED
+        ]
+        if reports and not failures:
             self._last_failure_fingerprint = None
             self._identical_failure_count = 0
             return ProgressState(should_stop=False)
 
-        fingerprint = report.fingerprint or report_fingerprint(report)
+        fingerprints = [
+            report.fingerprint or report_fingerprint(report) for report in failures
+        ]
+        if len(fingerprints) == 1:
+            fingerprint = fingerprints[0]
+        else:
+            encoded = json.dumps(
+                fingerprints, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            fingerprint = f"validation-run:{hashlib.sha256(encoded).hexdigest()}"
         if fingerprint == self._last_failure_fingerprint:
             self._identical_failure_count += 1
         else:

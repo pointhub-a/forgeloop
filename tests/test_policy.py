@@ -1,5 +1,6 @@
 import pytest
 
+from forgeloop.config import HarnessConfig
 from forgeloop.models import Action
 from forgeloop.policy import PolicyEngine, action_fingerprint
 
@@ -35,7 +36,11 @@ def test_symlink_escape_is_denied(tmp_path):
 )
 def test_dangerous_commands_require_approval(tmp_path, argv):
     decision = PolicyEngine().evaluate(
-        Action(kind="run_command", arguments={"argv": argv}), tmp_path
+        Action(
+            kind="run_command",
+            arguments={"argv": argv, "timeout_seconds": 60},
+        ),
+        tmp_path,
     )
 
     assert decision.effect == "require_approval"
@@ -52,7 +57,11 @@ def test_git_global_options_cannot_bypass_dangerous_command_rules(
     tmp_path, argv, rule_id
 ):
     decision = PolicyEngine().evaluate(
-        Action(kind="run_command", arguments={"argv": argv}), tmp_path
+        Action(
+            kind="run_command",
+            arguments={"argv": argv, "timeout_seconds": 60},
+        ),
+        tmp_path,
     )
 
     assert decision.effect == "require_approval"
@@ -70,7 +79,11 @@ def test_git_global_options_cannot_bypass_dangerous_command_rules(
 )
 def test_action_supplied_git_config_options_are_denied(tmp_path, argv):
     decision = PolicyEngine().evaluate(
-        Action(kind="run_command", arguments={"argv": argv}), tmp_path
+        Action(
+            kind="run_command",
+            arguments={"argv": argv, "timeout_seconds": 60},
+        ),
+        tmp_path,
     )
 
     assert decision.effect == "deny"
@@ -81,7 +94,10 @@ def test_shell_metacharacters_are_denied(tmp_path, metacharacter):
     decision = PolicyEngine().evaluate(
         Action(
             kind="run_command",
-            arguments={"argv": ["pytest", metacharacter, "env"]},
+            arguments={
+                "argv": ["pytest", metacharacter, "env"],
+                "timeout_seconds": 60,
+            },
         ),
         tmp_path,
     )
@@ -91,7 +107,13 @@ def test_shell_metacharacters_are_denied(tmp_path, metacharacter):
 
 def test_non_recursive_rm_option_is_not_treated_as_recursive_delete(tmp_path):
     decision = PolicyEngine().evaluate(
-        Action(kind="run_command", arguments={"argv": ["rm", "--force", "build"]}),
+        Action(
+            kind="run_command",
+            arguments={
+                "argv": ["rm", "--force", "build"],
+                "timeout_seconds": 60,
+            },
+        ),
         tmp_path,
     )
 
@@ -100,8 +122,14 @@ def test_non_recursive_rm_option_is_not_treated_as_recursive_delete(tmp_path):
 
 
 def test_action_fingerprint_is_stable_for_argument_key_order():
-    first = Action(kind="remember", arguments={"key": "fact", "value": {"b": 2, "a": 1}})
-    second = Action(kind="remember", arguments={"value": {"a": 1, "b": 2}, "key": "fact"})
+    first = Action(
+        kind="remember",
+        arguments={"key": "fact", "value": "ordered", "tags": ["a", "b"]},
+    )
+    second = Action(
+        kind="remember",
+        arguments={"tags": ["a", "b"], "value": "ordered", "key": "fact"},
+    )
 
     first_fingerprint = action_fingerprint(first)
 
@@ -114,17 +142,29 @@ def test_action_fingerprint_is_stable_for_argument_key_order():
     ("action", "effect", "rule_id"),
     [
         (
-            Action(kind="run_command", arguments={"argv": ["pytest", "-q"]}),
+            Action(
+                kind="run_command",
+                arguments={"argv": ["pytest", "-q"], "timeout_seconds": 60},
+            ),
             "allow",
             "default.allow",
         ),
         (
-            Action(kind="run_command", arguments={"argv": ["unknown-tool"]}),
+            Action(
+                kind="run_command",
+                arguments={"argv": ["unknown-tool"], "timeout_seconds": 60},
+            ),
             "deny",
             "command.executable_not_allowed",
         ),
         (
-            Action(kind="run_command", arguments={"argv": ["git", "reset", "--hard"]}),
+            Action(
+                kind="run_command",
+                arguments={
+                    "argv": ["git", "reset", "--hard"],
+                    "timeout_seconds": 60,
+                },
+            ),
             "require_approval",
             "git.hard_reset",
         ),
@@ -139,3 +179,59 @@ def test_command_decisions_include_rule_reason_and_fingerprint(
     assert decision.rule_id == rule_id
     assert decision.reason
     assert decision.fingerprint == action_fingerprint(action)
+
+
+@pytest.mark.parametrize(
+    ("argv", "rule_id"),
+    [
+        (["dropdb", "application"], "database.drop"),
+        (["psql", "-c", "DROP DATABASE application"], "database.drop"),
+        (["sudo", "pytest", "-q"], "privilege.escalation"),
+        (["chmod", "700", "deploy.sh"], "permission.change"),
+        (
+            ["python3", "-m", "pip", "install", "https://example.test/pkg.whl"],
+            "network.execute",
+        ),
+    ],
+)
+def test_destructive_signatures_are_matched_before_executable_allowlist(
+    tmp_path, argv, rule_id
+):
+    action = Action(
+        kind="run_command",
+        arguments={"argv": argv, "timeout_seconds": 60},
+    )
+
+    approved = PolicyEngine().evaluate(action, tmp_path)
+    denied = PolicyEngine(HarnessConfig(approval_rule_ids=[])).evaluate(
+        action, tmp_path
+    )
+
+    assert approved.effect == "require_approval"
+    assert approved.rule_id == rule_id
+    assert denied.effect == "deny"
+    assert denied.rule_id == rule_id
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["python3", "-c", "DROP DATABASE application"],
+        ["python3", "-c", "https://example.test/pkg.whl"],
+        ["pytest", "-k", "chmod"],
+        ["git", "status", "--short"],
+    ],
+)
+def test_dangerous_signature_words_do_not_match_safe_argument_boundaries(
+    tmp_path, argv
+):
+    decision = PolicyEngine().evaluate(
+        Action(
+            kind="run_command",
+            arguments={"argv": argv, "timeout_seconds": 60},
+        ),
+        tmp_path,
+    )
+
+    assert decision.effect == "allow"
+    assert decision.rule_id == "default.allow"

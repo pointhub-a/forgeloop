@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from forgeloop.config import HarnessConfig
@@ -45,6 +46,43 @@ _GIT_GLOBAL_FLAGS = {
     "--no-replace-objects",
     "--noglob-pathspecs",
 }
+_DATABASE_CLIENTS = {"mysql", "mysqlsh", "psql", "sqlite3"}
+_DATABASE_DROP = re.compile(r"\bdrop\s+(?:database|schema|table)\b", re.I)
+_PRIVILEGE_EXECUTABLES = {"doas", "pkexec", "su", "sudo"}
+_PERMISSION_EXECUTABLES = {"chgrp", "chmod", "chown", "setfacl"}
+
+
+def _dangerous_command_rule(argv: list[str]) -> str | None:
+    executable = Path(argv[0]).name.lower()
+    lowered = [argument.lower() for argument in argv]
+
+    if executable == "dropdb" or (
+        executable in _DATABASE_CLIENTS
+        and any(_DATABASE_DROP.search(argument) for argument in argv[1:])
+    ):
+        return "database.drop"
+    if executable in _PRIVILEGE_EXECUTABLES:
+        return "privilege.escalation"
+    if executable in _PERMISSION_EXECUTABLES:
+        return "permission.change"
+    pip_install = executable in {"pip", "pip3"} and "install" in lowered[1:]
+    python_pip_install = (
+        executable in {"python", "python3", "pypy", "pypy3"}
+        and len(lowered) >= 4
+        and lowered[1:4] == ["-m", "pip", "install"]
+    )
+    package_exec = (
+        executable == "npx"
+        or (
+            executable in {"npm", "pnpm", "yarn"}
+            and any(argument in {"exec", "dlx"} for argument in lowered[1:])
+        )
+        or executable in {"bunx", "uvx"}
+        or (executable == "pipx" and "run" in lowered[1:])
+    )
+    if pip_install or python_pip_install or package_exec:
+        return "network.execute"
+    return None
 
 
 def resolve_workspace_path(workspace: Path, requested: str) -> Path:
@@ -177,6 +215,8 @@ class PolicyEngine:
                 for argument in git_command[1]
             ):
                 rule_id = "git.force_push"
+            else:
+                rule_id = _dangerous_command_rule(argv)
 
             if rule_id is not None:
                 effect = (

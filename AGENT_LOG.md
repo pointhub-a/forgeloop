@@ -143,3 +143,15 @@
 - 评审：因使用者明确“不派生 agent”，未派 reviewer；实现者依次完成 spec 合规自审与代码质量/安全自审，无 Critical/Important 遗留。该流程偏离按事实记录，不伪造外部 review。
 - 提交：`70ff745`（`docs: complete ForgeLoop delivery and verification [agent: Codex Task Agent]`）。人工变更：本 task 内无学生手写代码；使用者只规定执行边界、作者身份与反思不得代写。
 - 外部待办：最终 GitLab CI pass、registry push、线上 URL、不同类型 Agent 冷启动复核与学生本人反思仍需要仓库所有者账户/本人完成。
+
+## 2026-07-17 — FINAL-REVIEW-FIXES
+
+- 技能：Superpowers `test-driven-development`；实现者 `/root/final_review_fixes`。范围为整分支终审提出的 6 组问题，不改动外部部署限制。
+- 策略 RED：`pytest -q tests/test_policy.py -k 'destructive_signatures or signature_words'` → `7 failed, 2 passed`；GREEN → `9 passed`。补齐数据库 DROP、提权、权限修改、联网获取并执行的 pre-allowlist 签名；每个签名均由 `approval_rule_ids` 决定 `require_approval` 或 fail-closed `deny`，并覆盖安全词边界。
+- 拒绝恢复 RED：Loop/Service 两个 focused tests → `2 failed`（状态停在 `denied`）；GREEN → `2 passed`。现在先发出可审计 `denied` 状态和结构化反馈，再显式回到 `running`；持久化与 Web API 回归确认可继续自我修正。
+- 验证进展 RED：多验证器 focused + bounded-tail/reset 回归 → `2 failed, 1 passed`；GREEN → `4 passed`。每轮验证只观察一次稳定有序失败聚合；仅整轮通过时清空失败历史；单验证器指纹行为保持不变。
+- Action schema RED：严格参数与 discriminated schema → `11 failed, 8 passed`，非法参数步骤反馈 → `1 failed`；GREEN 分别为 `19 passed` 与 `1 passed`。8 种动作现有精确必填/允许字段、严格类型和范围，Provider 收到顶层 kind-discriminated `oneOf` schema；`recall.limit` 同时受请求值和配置上限约束。
+- Action schema 补充边界：NUL path/argv focused → `2 failed, 10 passed`；加入 schema pattern 后 → `12 passed`，因此 OS 级非法字符串也在 parser 阶段被拒绝。
+- SQLite 跨线程 RED：Service worker-thread memory 动作 → `1 failed`；显式 lifecycle test → `1 failed`。GREEN → `2 passed`。连接使用 `check_same_thread=False` 且所有访问由 `RLock` 串行化，并提供 `close`/context-manager 生命周期。
+- Task 4 账本已关闭：新增“不同前缀位于 8192 字符尾部窗口之外时指纹相同”与 `A,A,B,A,A,A` 连续失败重置回归。
+- 最终验证：`PATH="$PWD/.venv/bin:$PATH" make test`、离线机制演示、`pip check`、`compileall` 与 `git diff --check` 全部通过；Docker/GitLab/线上 URL 等外部限制保持与 Task 10 记录一致，未伪造验证结果。

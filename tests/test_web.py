@@ -61,7 +61,13 @@ class WebHarness:
 def loop_factory(workspace: Path, task_id: str) -> AgentLoop:
     config = HarnessConfig()
     dangerous_action = json.dumps(
-        {"kind": "run_command", "arguments": {"argv": ["rm", "-rf", "build"]}}
+        {
+            "kind": "run_command",
+            "arguments": {
+                "argv": ["rm", "-rf", "build"],
+                "timeout_seconds": 60,
+            },
+        }
     )
     return AgentLoop(
         provider=ScriptedProvider([dangerous_action]),
@@ -135,6 +141,47 @@ def pending_task(web_harness: WebHarness, tmp_path: Path) -> TaskRecord:
     advanced = web_harness.client.post(f"/api/tasks/{task_id}/advance")
     assert advanced.status_code == 200
     return web_harness.task_repository.get(task_id)
+
+
+def test_api_keeps_task_running_after_an_audited_policy_denial(
+    web_harness: WebHarness, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "denied-workspace"
+    workspace.mkdir()
+    created = web_harness.client.post(
+        "/api/tasks",
+        json={
+            "description": "recover",
+            "workspace": str(workspace),
+            "provider": "demo",
+        },
+    )
+    task_id = created.json()["id"]
+    loop = web_harness.task_service._loops[task_id]
+    loop.provider = ScriptedProvider(
+        [
+            json.dumps(
+                {
+                    "kind": "run_command",
+                    "arguments": {
+                        "argv": ["unknown-tool"],
+                        "timeout_seconds": 60,
+                    },
+                }
+            )
+        ]
+    )
+
+    advanced = web_harness.client.post(f"/api/tasks/{task_id}/advance")
+    detail = web_harness.client.get(f"/api/tasks/{task_id}")
+
+    assert advanced.status_code == 200
+    assert advanced.json()["status"] == "running"
+    assert detail.json()["status"] == "running"
+    assert any(
+        event["data"].get("status") == "denied"
+        for event in detail.json()["events"]
+    )
 
 
 def test_home_explains_product_and_security_boundary(client: TestClient) -> None:

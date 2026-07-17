@@ -34,7 +34,7 @@ def test_task_projection_round_trips_through_save_and_get(db_path, tmp_path):
     task.last_validation_passed = True
     task.pending_action = Action(
         kind="run_command",
-        arguments={"env": {"B": "2", "A": "1"}, "argv": ["make", "test"]},
+        arguments={"argv": ["make", "test"], "timeout_seconds": 60},
     )
 
     repository.save(task)

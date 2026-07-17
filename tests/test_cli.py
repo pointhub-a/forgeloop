@@ -262,7 +262,10 @@ def test_serve_openai_uses_injected_opener_without_network(
 
         def read(self) -> bytes:
             action = json.dumps(
-                {"kind": "recall", "arguments": {"tags": ["demo"]}}
+                {
+                    "kind": "recall",
+                    "arguments": {"tags": ["demo"], "limit": 10},
+                }
             )
             return json.dumps(
                 {"choices": [{"message": {"content": action}}]}
