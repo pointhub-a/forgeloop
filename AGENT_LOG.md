@@ -123,6 +123,13 @@
 - 结论：Sites 要求 Cloudflare Workers 兼容输出；ForgeLoop 需要本地 shell、挂载工作区和 SQLite，不能安全发布到该运行时。
 - 决策：交付 Docker/OCI 部署；真实线上 URL 需使用者的容器平台账户，不能伪造。
 
+## 2026-07-17 — TASK-010-REVIEW
+
+- 外部双重评审：发现 README `read -rsp` 非跨 shell（Important）与 Docker 静态合同测试过窄（Minor）。
+- 修复：Python `getpass` + `O_EXCL/O_NOFOLLOW` + `0600` 原子 secret 写入；静态测试覆盖 multi-stage、wheel、USER、VOLUME、HEALTHCHECK、remote/allowed-host。
+- 最终：250 tests passed；wheel/sdist 重建；Spec PASS；Task Quality APPROVED。
+- 外部限制：本机无 Docker 兼容可执行程序，未声称镜像/health smoke 已通过。
+
 ## 2026-07-17 — TASK-010
 
 - 技能：Superpowers `test-driven-development`、`writing-plans`（执行已批准的 Task10 brief）、`openai-docs`；实现者 `/root/task10_distribution_docs`，提交作者 `Codex Task Agent`。

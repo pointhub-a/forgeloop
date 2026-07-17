@@ -443,8 +443,6 @@ Commit: `feat: implement provider abstraction and agent loop [agent: delegated-w
 
 **Status:** Complete — commits `e253f94`, `568bb21`, `d21dcde`; spec compliance PASS; task quality PASS.
 
-**Status:** Complete — commits `e253f94`, `568bb21`, `d21dcde`; spec compliance PASS; task quality PASS.
-
 **Files:**
 - Create: `src/forgeloop/repository.py`
 - Create: `src/forgeloop/service.py`
@@ -499,8 +497,6 @@ Commit: `feat: persist tasks events and approvals [agent: delegated-worker]`.
 ---
 
 ### Task 8: Local WebUI and HTTP API
-
-**Status:** Complete — commits `058961b`, `8a5dc5d`; spec compliance ✅; task quality approved.
 
 **Status:** Complete — commits `058961b`, `8a5dc5d`; spec compliance ✅; task quality approved.
 
@@ -631,7 +627,7 @@ Commit: `feat: add deterministic mechanism demo and CLI [agent: delegated-worker
 
 ### Task 10: Distribution, CI, Cold-Start Documentation, and Final QA
 
-**Status:** Delivered — commit `70ff745`; spec-compliance self-review PASS; quality/security self-review PASS. Docker build/health smoke remains unrun locally because no Docker-compatible executable is installed.
+**Status:** Complete — commits `70ff745`, `6fb12cc`, `6a6db5a`; spec compliance PASS; task quality APPROVED. Docker build/health smoke remains unrun locally because no Docker-compatible executable is installed.
 
 **Files:**
 - Modify: `pyproject.toml`
