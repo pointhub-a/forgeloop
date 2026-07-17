@@ -108,3 +108,17 @@
 - 依赖修订：Starlette 1.3.1 警告 legacy httpx，改用可安装的 `httpx2>=2,<3`，不隐藏 warning。
 - 评审修复：trusted Host 抵御 DNS rebinding；credential 全路由绑定 provider_name；状态检查进入 TaskService 锁内，Web 映射 409。
 - 最终：47 focused / 223 full；Spec compliant；Task quality Approved。
+
+## 2026-07-17 — TASK-009
+
+- 实现者：`/root/task9_demo_cli`；commits `48b423e`、`8a758e6`。
+- 机制演示：真实 Policy/Tool/Validator/Progress/Memory/Loop；危险动作仅等待审批；失败反馈改变下一动作并成功；重复指纹 no_progress。
+- 初始：10 focused / 233 full；脚本 JSON 通过。
+- 评审修复：demo响应跟随可配置阈值；wildcard bind强制具体 `--allowed-host`；credentials/composition/runner错误统一脱敏，运行期Provider错误仅安全回灌。
+- 最终：20 focused / 243 full；Spec compliant；Task quality Approved。
+
+## 2026-07-17 — HOSTING-001
+
+- 技能：`sites:sites-hosting`。
+- 结论：Sites 要求 Cloudflare Workers 兼容输出；ForgeLoop 需要本地 shell、挂载工作区和 SQLite，不能安全发布到该运行时。
+- 决策：交付 Docker/OCI 部署；真实线上 URL 需使用者的容器平台账户，不能伪造。

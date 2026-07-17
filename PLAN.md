@@ -567,6 +567,8 @@ Commit: `feat: add observable local WebUI and API [agent: delegated-worker]`.
 
 ### Task 9: Deterministic Mechanism Demo and CLI
 
+**Status:** Complete — commits `48b423e`, `8a758e6`; spec compliance ✅; task quality approved.
+
 **Files:**
 - Create: `src/forgeloop/demo.py`
 - Create: `src/forgeloop/cli.py`
@@ -580,9 +582,9 @@ Commit: `feat: add observable local WebUI and API [agent: delegated-worker]`.
 
 `DemoResult` is a strict serializable model containing `dangerous_action`, `first_validation`, `feedback_seen_by_provider`, `corrective_action`, `final_status`, `no_progress_status`, and auditable event summaries. `run_mechanism_demo` uses a real temporary workspace, `ToolRuntime`, `PolicyEngine`, `ValidatorRunner`, `ProgressTracker`, `MemoryStore`, and three ScriptedProvider scenarios; it never calls a network or reads credentials.
 
-`main(argv=None, *, backend=None, uvicorn_runner=None) -> int` is test-injectable. `credentials` defaults to `KeyringBackend`; `set` uses `getpass`, status/clear never reveal a key. `serve` accepts `--provider demo|openai`, `--host` (default `127.0.0.1`), `--port` (default `8000`), `--data-dir`, `--config`, and `--allow-remote`. It constructs repositories, memory, TaskService, CredentialService and AppDependencies. Only this composition root may call `get_for_provider`; OpenAI mode fails clearly if no key. Demo mode never reads a key. A non-loopback host is rejected unless `--allow-remote`, and the selected host is explicitly added to Web's `allowed_hosts`.
+`main(argv=None, *, backend=None, uvicorn_runner=None) -> int` is test-injectable. `credentials` defaults to `KeyringBackend`; `set` uses `getpass`, status/clear never reveal a key, and every backend/composition error passes through project redaction with known secrets when available. `serve` accepts `--provider demo|openai`, `--host` (default `127.0.0.1`), `--port` (default `8000`), `--data-dir`, `--config`, `--allow-remote`, and repeatable `--allowed-host`. It constructs repositories, memory, TaskService, CredentialService and AppDependencies. Only this composition root may call `get_for_provider`; OpenAI mode fails clearly if no key. Demo mode never reads a key and creates at least `max_identical_actions` scripted responses. A non-loopback host is rejected unless `--allow-remote`; wildcard binds `0.0.0.0`/`::` additionally require at least one concrete `--allowed-host`, because bind addresses and trusted HTTP Hosts are distinct.
 
-- [ ] **Step 1: Write failing required-demonstration test**
+- [x] **Step 1: Write failing required-demonstration test**
 
 ```python
 def test_demo_proves_all_required_mechanisms(tmp_path):
@@ -595,11 +597,11 @@ def test_demo_proves_all_required_mechanisms(tmp_path):
     assert result.no_progress_status == "no_progress"
 ```
 
-- [ ] **Step 2: Implement isolated demo fixture and scripted responses**
+- [x] **Step 2: Implement isolated demo fixture and scripted responses**
 
 Create a temporary `calc.py` and use `ValidatorRunner` with the active Python executable to check exact file content; do not depend on pytest inside the demo workspace. Run one scenario for governance, one fail→feedback→edit→pass→finish scenario, and one repeated-fingerprint scenario. Return structured evidence and event summaries. Never execute the dangerous governance example.
 
-- [ ] **Step 3: Write failing CLI tests**
+- [x] **Step 3: Write failing CLI tests**
 
 ```python
 def test_demo_cli_prints_machine_readable_summary(capsys):
@@ -612,11 +614,11 @@ def test_credentials_set_uses_hidden_input(monkeypatch, fake_backend):
     assert main(["credentials", "set", "openai"], backend=fake_backend) == 0
 ```
 
-- [ ] **Step 4: Implement argparse CLI and executable script**
+- [x] **Step 4: Implement argparse CLI and executable script**
 
-`serve` performs the exact composition described above and calls the injected/default Uvicorn runner with the app. Determine loopback using `ipaddress.ip_address(...).is_loopback` plus hostname `localhost`; reject other names/addresses unless `--allow-remote` is explicit. `credentials set` uses `getpass`; status emits no secret. The script imports and calls the same demo, avoiding duplicate logic.
+`serve` performs the exact composition described above and calls the injected/default Uvicorn runner with the app. Determine loopback using `ipaddress.ip_address(...).is_loopback` plus hostname `localhost`; reject other names/addresses unless `--allow-remote` is explicit, and enforce the wildcard/allowed-host rule above. `credentials set` uses `getpass`; status emits no secret. The script imports and calls the same demo, avoiding duplicate logic.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `python3 -m pytest tests/test_demo.py tests/test_cli.py -q` and `python3 scripts/mechanism_demo.py --json`
 Expected: tests pass and JSON proves all three course behaviors.
@@ -627,6 +629,9 @@ Commit: `feat: add deterministic mechanism demo and CLI [agent: delegated-worker
 ### Task 10: Distribution, CI, Cold-Start Documentation, and Final QA
 
 **Files:**
+- Modify: `pyproject.toml`
+- Modify: `src/forgeloop/cli.py`
+- Modify: `tests/test_cli.py`
 - Create: `Dockerfile`
 - Create: `.dockerignore`
 - Create: `compose.yaml`
@@ -642,13 +647,15 @@ Commit: `feat: add deterministic mechanism demo and CLI [agent: delegated-worker
 - Consumes: complete application and test commands.
 - Produces: repeatable local/container distribution and all course deliverables.
 
+Add `build>=1.2,<2` to dev dependencies. CLI default backend checks `FORGELOOP_SECRET_FILE`: when set, use a read-only `SecretFileBackend` for provider `openai`; otherwise use `KeyringBackend`. This environment variable is a path, never the secret itself. Docker/Compose run demo mode without a key; documented real mode mounts an owner-only secret at `/run/secrets/forgeloop_api_key` and sets only the path variable.
+
 - [ ] **Step 1: Write packaging smoke test before container files**
 
 Add `tests/test_distribution.py` asserting the example TOML loads, package metadata exposes the CLI, `.gitlab-ci.yml` has a top-level `unit-test` job, Dockerfile runs as non-root, and README contains exact required headings: 项目简介、安装与运行、分发、目录结构、凭据安全、安全边界、已知限制。
 
 - [ ] **Step 2: Observe red and add distribution files**
 
-Use `python:3.12-slim`; create an unprivileged `forgeloop` user; install the wheel; set read-only source layers; mount `/workspace`, `/data`, and `/run/secrets`; expose 8000; healthcheck `/healthz`. GitLab stages run `python3 -m pytest -q` in job exactly named `unit-test`, then build the image in `container-build`.
+Use a multi-stage `python:3.12-slim` build; create an unprivileged `forgeloop` user; install the wheel; set read-only source layers; mount `/workspace`, `/data`, and `/run/secrets`; expose 8000; healthcheck `/healthz`. Default command binds `0.0.0.0` with remote mode and concrete allowed hosts `localhost`/`127.0.0.1`. GitLab stages run `python3 -m pytest -q` in job exactly named `unit-test`, then build the image in `container-build`.
 
 - [ ] **Step 3: Write complete README and example configuration**
 
