@@ -14,8 +14,13 @@ import tempfile
 
 import uvicorn
 
-from forgeloop.config import ConfigError, HarnessConfig, load_config
-from forgeloop.credentials import CredentialBackend, CredentialService, KeyringBackend
+from forgeloop.config import HarnessConfig, load_config
+from forgeloop.credentials import (
+    CredentialBackend,
+    CredentialService,
+    KeyringBackend,
+    redact,
+)
 from forgeloop.demo import run_mechanism_demo
 from forgeloop.feedback import ProgressTracker, ValidatorRunner
 from forgeloop.loop import AgentLoop
@@ -44,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--config", type=Path)
     serve.add_argument("--allow-remote", action="store_true")
+    serve.add_argument("--allowed-host", action="append", default=[])
 
     credentials = commands.add_parser("credentials", help="manage credentials")
     credential_commands = credentials.add_subparsers(
@@ -70,22 +76,44 @@ def _run_demo(*, as_json: bool) -> int:
     return 0
 
 
+def _report_error(
+    prefix: str,
+    exc: Exception,
+    *,
+    secrets: Sequence[str] = (),
+) -> int:
+    print(f"{prefix}: {redact(str(exc), tuple(secrets))}", file=sys.stderr)
+    return 2
+
+
 def _run_credentials(
     args: argparse.Namespace, backend: CredentialBackend | None
 ) -> int:
-    service = CredentialService(backend if backend is not None else KeyringBackend())
-    provider = args.provider
-    if args.credential_command == "set":
-        service.set(provider, getpass.getpass(f"Credential for {provider}: "))
-        print(f"Credential for {provider} stored.")
-    elif args.credential_command == "clear":
-        service.clear(provider)
-        print(f"Credential for {provider} cleared.")
-    else:
-        status = service.status(provider)
-        configured = "configured" if status.configured else "not configured"
-        print(f"{provider}: {configured} ({status.source})")
-    return 0
+    registered_secrets: list[str] = []
+    try:
+        service = CredentialService(
+            backend if backend is not None else KeyringBackend()
+        )
+        provider = args.provider
+        if args.credential_command == "set":
+            secret = getpass.getpass(f"Credential for {provider}: ")
+            registered_secrets.append(secret)
+            service.set(provider, secret)
+            print(f"Credential for {provider} stored.")
+        elif args.credential_command == "clear":
+            service.clear(provider)
+            print(f"Credential for {provider} cleared.")
+        else:
+            status = service.status(provider)
+            configured = "configured" if status.configured else "not configured"
+            print(f"{provider}: {configured} ({status.source})")
+        return 0
+    except Exception as exc:
+        return _report_error(
+            "Unable to manage credentials",
+            exc,
+            secrets=registered_secrets,
+        )
 
 
 def _is_loopback(host: str) -> bool:
@@ -93,6 +121,13 @@ def _is_loopback(host: str) -> bool:
         return True
     try:
         return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_wildcard(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_unspecified
     except ValueError:
         return False
 
@@ -126,7 +161,9 @@ def _loop_factory(
                 provider_options["opener"] = opener
             provider = OpenAICompatibleProvider(**provider_options)
         else:
-            provider = ScriptedProvider([demo_response] * 3)
+            provider = ScriptedProvider(
+                [demo_response] * config.max_identical_actions
+            )
         return AgentLoop(
             provider=provider,
             policy=PolicyEngine(config),
@@ -157,7 +194,20 @@ def _run_serve(
             file=sys.stderr,
         )
         return 2
+    explicit_allowed_hosts = {
+        host.strip().lower()
+        for host in args.allowed_host
+        if host.strip() and not _is_wildcard(host.strip())
+    }
+    wildcard_bind = _is_wildcard(args.host)
+    if wildcard_bind and not explicit_allowed_hosts:
+        print(
+            "A wildcard bind requires at least one concrete --allowed-host.",
+            file=sys.stderr,
+        )
+        return 2
 
+    api_key: str | None = None
     try:
         config = load_config(args.config) if args.config is not None else HarnessConfig()
         data_dir = args.data_dir.expanduser().resolve()
@@ -165,7 +215,6 @@ def _run_serve(
         credential_service = CredentialService(
             backend if backend is not None else KeyringBackend()
         )
-        api_key = None
         if args.provider == "openai":
             api_key = credential_service.get_for_provider("openai")
             if api_key is None:
@@ -200,17 +249,29 @@ def _run_serve(
             ).model_dump(mode="json"),
             provider_name=args.provider,
             allowed_hosts=frozenset(
-                {"localhost", "127.0.0.1", "::1", "testserver", args.host.lower()}
+                {"localhost", "127.0.0.1", "::1", "testserver"}
+                | explicit_allowed_hosts
+                | ({args.host.lower()} if not wildcard_bind else set())
             ),
         )
         app = create_app(dependencies)
-    except (ConfigError, OSError, RuntimeError, ValueError) as exc:
-        print(f"Unable to compose ForgeLoop: {exc}", file=sys.stderr)
-        return 2
+    except Exception as exc:
+        return _report_error(
+            "Unable to compose ForgeLoop",
+            exc,
+            secrets=(api_key,) if api_key is not None else (),
+        )
 
     runner = uvicorn_runner if uvicorn_runner is not None else uvicorn.run
-    runner(app, host=args.host, port=args.port)
-    return 0
+    try:
+        runner(app, host=args.host, port=args.port)
+        return 0
+    except Exception as exc:
+        return _report_error(
+            "Unable to run ForgeLoop",
+            exc,
+            secrets=(api_key,) if api_key is not None else (),
+        )
 
 
 def main(
@@ -224,7 +285,10 @@ def main(
 
     args = _parser().parse_args(argv)
     if args.command == "demo":
-        return _run_demo(as_json=args.as_json)
+        try:
+            return _run_demo(as_json=args.as_json)
+        except Exception as exc:
+            return _report_error("Unable to run mechanism demo", exc)
     if args.command == "credentials":
         return _run_credentials(args, backend)
     if args.command == "serve":

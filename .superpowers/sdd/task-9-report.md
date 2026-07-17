@@ -193,3 +193,93 @@ failure fingerprint.
   active provider state is not reconstructed.
 - Demo-mode Web tasks use a finite safe scripted recall sequence and terminate by
   the existing no-progress mechanism.
+
+## External review follow-up
+
+Three Important findings from the external review were addressed with separate
+RED/GREEN cycles.
+
+### Configured demo no-progress threshold
+
+RED used a real composed Web app with `max_identical_actions = 4`, created a
+task through the API, and advanced the real `TaskService` four times. The fourth
+step incorrectly remained `running` because the fixed three-response provider
+was exhausted:
+
+```text
+FAILED test_serve_demo_reaches_custom_no_progress_threshold
+assert 'running' == 'no_progress'
+1 failed
+```
+
+GREEN sizes each demo-mode `ScriptedProvider` response sequence from
+`config.max_identical_actions`. The task now reaches `no_progress` exactly at
+step 4, and its persisted events contain no `provider_failure`:
+
+```text
+1 passed in 0.13s
+```
+
+### Wildcard binding and explicit allowed hosts
+
+RED covered both `0.0.0.0` and `::` wildcard binds without an allowed host, plus
+a wildcard bind with two repeatable `--allowed-host` values:
+
+```text
+3 failed
+```
+
+GREEN adds repeatable `--allowed-host`, requires at least one concrete explicit
+host for wildcard binds, and excludes the wildcard address itself from Web's
+trusted Host set. Non-wildcard remote binds retain their literal-host behavior
+and merge explicit hosts:
+
+```text
+4 passed in 0.13s
+```
+
+The composed app accepts `example.test` and `admin.example.test` while rejecting
+`Host: 0.0.0.0` for a wildcard listener.
+
+### CLI error redaction
+
+RED injected credential backend, provider opener, and Uvicorn runner failures
+whose messages contained an unmistakably fake token. Credential commands raised
+instead of returning a CLI status, serve composition printed a raw backend
+exception, and runner errors escaped:
+
+```text
+6 failed
+```
+
+GREEN routes credential, demo, serve composition, and runner exceptions through
+`forgeloop.credentials.redact`. Credential/backend/composition/runner failures
+return 2, omit both registered secrets and token-shaped values, and include
+`[REDACTED]` where sensitive text was removed. A provider opener failure remains
+inside the existing AgentLoop safety boundary: the task deterministically stays
+`running`, a sanitized `provider_failure` event is persisted, and API responses,
+events, stdout, and stderr contain neither the API key nor the fake token.
+
+```text
+6 passed in 0.13s
+```
+
+### Follow-up verification
+
+Focused gate:
+
+```text
+.venv/bin/python -m pytest tests/test_demo.py tests/test_cli.py -q
+20 passed in 0.54s
+```
+
+Full regression:
+
+```text
+.venv/bin/python -m pytest -q
+243 passed in 6.49s
+```
+
+The real `.venv/bin/python scripts/mechanism_demo.py --json` command still
+reports `require_approval`, the initial failed validation, observed feedback,
+`replace_text`, final `succeeded`, and repeated-fingerprint `no_progress`.
