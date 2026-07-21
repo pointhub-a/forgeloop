@@ -571,6 +571,28 @@ class AgentLoop:
             return
         if state.status is not TaskStatus.RUNNING:
             return
+        if provider_failed:
+            if provider_error is not None:
+                data: dict[str, object] = {
+                    "status": state.status.value,
+                    "reason": "provider_failure",
+                    "provider_error_code": provider_error.code,
+                    "provider_attempts": provider_error.attempts,
+                    "provider_retryable": provider_error.retryable,
+                }
+                if provider_error.http_status is not None:
+                    data["provider_http_status"] = provider_error.http_status
+                self._event(
+                    EventKind.STATE,
+                    _provider_failure_summary(provider_error),
+                    data,
+                )
+            else:
+                self._event(
+                    EventKind.STATE,
+                    "Provider failure recorded; retrying within the step budget.",
+                    {"status": state.status.value, "reason": "provider_failure"},
+                )
         if no_progress:
             state.status = TaskStatus.NO_PROGRESS
             self._event(
@@ -596,29 +618,6 @@ class AgentLoop:
                 {"status": state.status.value, "reason": "steps"},
             )
             return
-        if provider_failed:
-            if provider_error is not None:
-                data: dict[str, object] = {
-                    "status": state.status.value,
-                    "reason": "provider_failure",
-                    "provider_error_code": provider_error.code,
-                    "provider_attempts": provider_error.attempts,
-                    "provider_retryable": provider_error.retryable,
-                }
-                if provider_error.http_status is not None:
-                    data["provider_http_status"] = provider_error.http_status
-                self._event(
-                    EventKind.STATE,
-                    _provider_failure_summary(provider_error),
-                    data,
-                )
-                return
-            self._event(
-                EventKind.STATE,
-                "Provider failure recorded; retrying within the step budget.",
-                {"status": state.status.value, "reason": "provider_failure"},
-            )
-
     def _bounded_context(self) -> list[dict[str, str]]:
         state = self._require_state()
         remaining = _CONTEXT_CONTENT_BYTES

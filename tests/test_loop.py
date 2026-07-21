@@ -270,6 +270,51 @@ def test_structured_provider_failure_is_safe_audit_feedback(
     assert str(error) not in recorded
 
 
+def test_structured_provider_failure_is_audited_before_step_budget(tmp_path):
+    error = ProviderError(
+        "unsafe timeout detail",
+        code="timeout",
+        attempts=2,
+        retryable=True,
+    )
+    result = make_loop(
+        tmp_path, StructuredFailureProvider(error), max_steps=1
+    ).run("fix")
+
+    assert result.status.value == "budget_exhausted"
+    assert [event.summary for event in result.events[-2:]] == [
+        "Provider timeout after 2 attempts.",
+        "Step budget exhausted.",
+    ]
+    assert result.events[-2].data["provider_error_code"] == "timeout"
+
+
+def test_structured_provider_failure_is_audited_before_wall_budget(
+    monkeypatch, tmp_path
+):
+    ticks = iter([10.0, 12.0])
+    monkeypatch.setattr("forgeloop.loop.time.monotonic", lambda: next(ticks))
+    error = ProviderError(
+        "unsafe timeout detail",
+        code="timeout",
+        attempts=2,
+        retryable=True,
+    )
+    config = HarnessConfig(max_steps=2, wall_time_seconds=1)
+    result = make_loop(
+        tmp_path,
+        StructuredFailureProvider(error),
+        config=config,
+    ).run("fix")
+
+    assert result.status.value == "budget_exhausted"
+    assert [event.summary for event in result.events[-2:]] == [
+        "Provider timeout after 2 attempts.",
+        "Wall-time budget exhausted.",
+    ]
+    assert result.events[-2].data["provider_attempts"] == 2
+
+
 def test_provider_failure_is_safe_feedback_and_counts_as_a_step(tmp_path):
     secret = "provider-secret-that-must-not-leak"
     provider = FailsOnceProvider(

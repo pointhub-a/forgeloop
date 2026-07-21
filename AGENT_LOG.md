@@ -163,6 +163,7 @@
 - 安全审计：结构化 Provider 错误 `4 failed` 后转为 `4 passed`；Provider/Loop 回归 `67 passed`。错误事件只记录稳定 code、HTTP status、attempts 和 retryable，不记录 Key、上游正文或 reasoning。
 - 组合：CLI `newapi`/secret-file 三项 `3 failed` 后转绿；Web provider/model 显示 `1 failed, 1 passed` 后为 `2 passed`；伪网关完整 `read_file → replace_text → run_validation → finish` 流程通过。
 - 文档与配置：`njusehub.example.toml` 缺失测试 `1 failed` 后转为 `1 passed`；本地 `njusehub.toml` 加入 Git ignore，示例不含凭据。
-- 最终自动化：`compileall` 通过；全量 `319 passed in 6.81s`；离线机制演示的 `final_status=succeeded`、`no_progress_status=no_progress`；wheel 与 sdist 均构建成功并包含 CLI、模板和静态资源。
-- 真实 njusehub 冒烟：`newapi · qwen-turbo` 在独立回环端口运行，一次性任务 4 步完成 `read_file → write_file → run_validation → finish`，单次推进约 1.3–2.6 秒，最终 `succeeded` 且最新验证通过；服务随后正常停止。记录不含 Key、响应正文或 reasoning。
+- 最终自动化：`compileall` 通过；审查修复后全量 `325 passed in 6.76s`；离线机制演示的 `final_status=succeeded`、`no_progress_status=no_progress`；wheel 与 sdist 均构建成功并包含 CLI、模板和静态资源。
+- 真实 njusehub 冒烟：`qwen-turbo` 与 `deepseek-v4-flash` 均在独立回环端口完成同一 4 步任务 `read_file → write_file → run_validation → finish`，最终 `succeeded` 且最新验证通过。qwen 单次推进约 1.3–2.6 秒，DeepSeek 约 2.5–6.6 秒；服务随后正常停止。记录不含 Key、响应正文或 reasoning。
 - 仓库审计：无 tracked `njusehub.toml`、`.forgeloop` 或 SQLite；令牌扫描只命中文档中的 Bearer/凭据说明文字与明确 fake fixtures，未发现真实凭据。
+- 独立代码审查：发现 Provider 失败恰逢 step/wall-time 预算终止时结构化原因未落入持久事件，以及缺少 DeepSeek 网关验收证据（2 Important）。前者先以 2 个失败回归测试复现，再调整事件顺序转绿；后者以真实 `deepseek-v4-flash` 完整任务关闭。
