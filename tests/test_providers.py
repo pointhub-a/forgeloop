@@ -372,6 +372,7 @@ def test_newapi_provider_retries_timeouts(failure):
     "failure",
     [
         URLError("connection unavailable"),
+        ConnectionError("connection reset"),
         HTTPError(
             "https://provider.example",
             429,
@@ -468,6 +469,7 @@ def test_newapi_provider_does_not_retry_terminal_http_errors(status):
         FakeResponse({}),
         FakeResponse({"choices": []}),
         FakeResponse({"choices": [{}]}),
+        FakeResponse({"choices": [{"message": {}}]}),
         FakeResponse({"choices": [{"message": "wrong-type"}]}),
     ],
 )
@@ -512,6 +514,20 @@ def test_newapi_provider_reports_terminal_retryable_failure_safely():
     assert raised.value.attempts == 2
     assert raised.value.retryable is True
     assert secret not in str(raised.value)
+
+
+@pytest.mark.parametrize("max_attempts", [0, 3])
+def test_newapi_provider_rejects_attempt_budgets_outside_one_or_two(
+    max_attempts,
+):
+    with pytest.raises(ValueError, match="max_attempts"):
+        provider_module.NewAPIProvider(
+            "https://provider.example/v1/chat/completions",
+            "qwen-turbo",
+            "fake-key",
+            20,
+            max_attempts=max_attempts,
+        )
 
 
 def test_http_provider_redacts_api_key_from_repr_and_errors():

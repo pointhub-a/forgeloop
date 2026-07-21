@@ -235,8 +235,8 @@ class NewAPIProvider:
         max_attempts: int = 2,
         retry_delay_seconds: float = 0.25,
     ) -> None:
-        if max_attempts < 1:
-            raise ValueError("max_attempts must be at least one")
+        if max_attempts not in {1, 2}:
+            raise ValueError("max_attempts must be one or two")
         self.base_url = base_url
         self.model = model
         self.api_key = api_key
@@ -310,6 +310,12 @@ class NewAPIProvider:
                     attempts=attempt,
                     retryable=True,
                 )
+            except OSError:
+                error = self._safe_error(
+                    code="connection_error",
+                    attempts=attempt,
+                    retryable=True,
+                )
             except (json.JSONDecodeError, UnicodeDecodeError):
                 error = self._safe_error(
                     code="invalid_response",
@@ -338,6 +344,8 @@ class NewAPIProvider:
             message = choice["message"]
             if not isinstance(message, dict):
                 raise TypeError
+            if "content" not in message:
+                raise KeyError
             content = message.get("content")
             if content is not None and not isinstance(content, str):
                 raise TypeError
