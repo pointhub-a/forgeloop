@@ -187,6 +187,89 @@ class FailsOnceProvider:
         return self.responses[len(self.calls) - 2]
 
 
+class StructuredFailureProvider:
+    def __init__(self, error):
+        self.error = error
+
+    def complete(self, messages, action_schema):
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_summary"),
+    [
+        (
+            ProviderError(
+                "unsafe upstream timeout detail",
+                code="timeout",
+                attempts=2,
+                retryable=True,
+            ),
+            "Provider timeout after 2 attempts.",
+        ),
+        (
+            ProviderError(
+                "unsafe rate-limit detail",
+                code="http_error",
+                http_status=429,
+                attempts=2,
+                retryable=True,
+            ),
+            "Provider returned HTTP 429 after 2 attempts.",
+        ),
+        (
+            ProviderError(
+                "unsafe authentication detail",
+                code="http_error",
+                http_status=401,
+                attempts=1,
+                retryable=False,
+            ),
+            "Provider authentication failed with HTTP 401.",
+        ),
+        (
+            ProviderError(
+                "unsafe empty response detail",
+                code="empty_content",
+                attempts=2,
+                retryable=True,
+            ),
+            "Provider returned empty content after 2 attempts.",
+        ),
+    ],
+)
+def test_structured_provider_failure_is_safe_audit_feedback(
+    tmp_path, error, expected_summary
+):
+    loop = make_loop(tmp_path, StructuredFailureProvider(error), max_steps=2)
+    loop.start("fix")
+
+    state = loop.step()
+
+    assert state.step_count == 1
+    assert state.status.value == "running"
+    assert state.events[-1].summary == expected_summary
+    assert state.events[-1].data == {
+        "status": "running",
+        "reason": "provider_failure",
+        "provider_error_code": error.code,
+        "provider_attempts": error.attempts,
+        "provider_retryable": error.retryable,
+        **(
+            {"provider_http_status": error.http_status}
+            if error.http_status is not None
+            else {}
+        ),
+    }
+    recorded = json.dumps(
+        {
+            "messages": state.messages,
+            "events": [event.summary for event in state.events],
+        }
+    )
+    assert str(error) not in recorded
+
+
 def test_provider_failure_is_safe_feedback_and_counts_as_a_step(tmp_path):
     secret = "provider-secret-that-must-not-leak"
     provider = FailsOnceProvider(

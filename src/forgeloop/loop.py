@@ -17,10 +17,36 @@ from forgeloop.models import (
     TaskStatus,
 )
 from forgeloop.policy import action_fingerprint
-from forgeloop.providers import ActionParseError, Provider, parse_action
+from forgeloop.providers import (
+    ActionParseError,
+    Provider,
+    ProviderError,
+    parse_action,
+)
 
 
 _CONTEXT_CONTENT_BYTES = 64 * 1024
+
+
+def _provider_failure_summary(error: ProviderError) -> str:
+    attempts = error.attempts
+    attempt_word = "attempt" if attempts == 1 else "attempts"
+    if error.code == "timeout":
+        return f"Provider timeout after {attempts} {attempt_word}."
+    if error.code == "connection_error":
+        return f"Provider connection failed after {attempts} {attempt_word}."
+    if error.code == "empty_content":
+        return (
+            f"Provider returned empty content after {attempts} {attempt_word}."
+        )
+    if error.code == "http_error" and error.http_status == 401:
+        return "Provider authentication failed with HTTP 401."
+    if error.code == "http_error" and error.http_status is not None:
+        suffix = (
+            f" after {attempts} {attempt_word}" if attempts > 1 else ""
+        )
+        return f"Provider returned HTTP {error.http_status}{suffix}."
+    return "The model provider failed to return an action."
 
 
 class ApprovalMismatch(ValueError):
@@ -116,6 +142,20 @@ class AgentLoop:
             response = self.provider.complete(
                 self._bounded_context(), Action.model_json_schema()
             )
+        except ProviderError as exc:
+            summary = _provider_failure_summary(exc)
+            feedback: dict[str, object] = {
+                "type": "provider_error",
+                "message": summary,
+                "code": exc.code,
+                "attempts": exc.attempts,
+                "retryable": exc.retryable,
+            }
+            if exc.http_status is not None:
+                feedback["http_status"] = exc.http_status
+            self._message("feedback", feedback)
+            self._finish_step(provider_failed=True, provider_error=exc)
+            return state
         except Exception:
             self._message(
                 "feedback",
@@ -518,7 +558,11 @@ class AgentLoop:
         )
 
     def _finish_step(
-        self, *, no_progress: bool = False, provider_failed: bool = False
+        self,
+        *,
+        no_progress: bool = False,
+        provider_failed: bool = False,
+        provider_error: ProviderError | None = None,
     ) -> None:
         state = self._require_state()
         if state.status is TaskStatus.CANCELLED:
@@ -553,6 +597,22 @@ class AgentLoop:
             )
             return
         if provider_failed:
+            if provider_error is not None:
+                data: dict[str, object] = {
+                    "status": state.status.value,
+                    "reason": "provider_failure",
+                    "provider_error_code": provider_error.code,
+                    "provider_attempts": provider_error.attempts,
+                    "provider_retryable": provider_error.retryable,
+                }
+                if provider_error.http_status is not None:
+                    data["provider_http_status"] = provider_error.http_status
+                self._event(
+                    EventKind.STATE,
+                    _provider_failure_summary(provider_error),
+                    data,
+                )
+                return
             self._event(
                 EventKind.STATE,
                 "Provider failure recorded; retrying within the step budget.",
