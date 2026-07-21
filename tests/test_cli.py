@@ -213,6 +213,26 @@ def test_serve_openai_fails_clearly_without_credential(
     assert "credential" in capsys.readouterr().err.lower()
 
 
+def test_serve_newapi_fails_clearly_without_credential(
+    tmp_path: Path,
+    fake_backend: FakeCredentialBackend,
+    capsys,
+) -> None:
+    runner = CapturingRunner()
+
+    assert main(
+        ["serve", "--provider", "newapi", "--data-dir", str(tmp_path)],
+        backend=fake_backend,
+        uvicorn_runner=runner,
+    ) == 2
+
+    assert fake_backend.reads == ["newapi"]
+    assert runner.calls == []
+    assert (
+        "forgeloop credentials set newapi" in capsys.readouterr().err
+    )
+
+
 def test_default_backend_reads_openai_credential_from_secret_file_environment(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -225,6 +245,22 @@ def test_default_backend_reads_openai_credential_from_secret_file_environment(
 
     output = capsys.readouterr().out
     assert "configured" in output
+    assert "secret_file" in output
+    assert "ordinary-provider-credential" not in output
+
+
+def test_default_backend_binds_secret_file_to_requested_newapi_provider(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    secret_file = tmp_path / "newapi-key"
+    secret_file.write_text("ordinary-provider-credential\n", encoding="utf-8")
+    secret_file.chmod(0o600)
+    monkeypatch.setenv("FORGELOOP_SECRET_FILE", str(secret_file))
+
+    assert main(["credentials", "status", "newapi"]) == 0
+
+    output = capsys.readouterr().out
+    assert "newapi: configured" in output
     assert "secret_file" in output
     assert "ordinary-provider-credential" not in output
 
@@ -300,6 +336,175 @@ def test_serve_openai_uses_injected_opener_without_network(
 
     assert len(requests) == 1
     assert fake_backend.reads == ["openai"]
+
+
+def test_serve_newapi_uses_its_credential_and_json_object_mode(
+    tmp_path: Path, fake_backend: FakeCredentialBackend
+) -> None:
+    runner = CapturingRunner()
+    fake_backend.values["newapi"] = "sk-unmistakably-fake-newapi"
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            action = json.dumps(
+                {
+                    "kind": "recall",
+                    "arguments": {"tags": ["demo"], "limit": 10},
+                }
+            )
+            return json.dumps(
+                {"choices": [{"message": {"content": action}}]}
+            ).encode()
+
+    def opener(request, *, timeout: int):
+        requests.append((request, timeout))
+        return Response()
+
+    assert main(
+        ["serve", "--provider", "newapi", "--data-dir", str(tmp_path)],
+        backend=fake_backend,
+        uvicorn_runner=runner,
+        opener=opener,
+    ) == 0
+
+    app, _options = runner.calls[0]
+    workspace = tmp_path / "newapi-workspace"
+    workspace.mkdir()
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        created = client.post(
+            "/api/tasks",
+            json={
+                "description": "recall demo memory",
+                "workspace": str(workspace),
+                "provider": "newapi",
+            },
+        )
+        assert created.status_code == 201
+        advanced = client.post(f"/api/tasks/{created.json()['id']}/advance")
+        assert advanced.status_code == 200
+
+    assert fake_backend.reads == ["newapi"]
+    assert len(requests) == 1
+    body = json.loads(requests[0][0].data)
+    assert body["response_format"] == {"type": "json_object"}
+
+
+def test_newapi_composition_executes_a_complete_governed_task(
+    tmp_path: Path, fake_backend: FakeCredentialBackend
+) -> None:
+    runner = CapturingRunner()
+    config_path = tmp_path / "newapi-flow.toml"
+    config_path.write_text(
+        "[[validators]]\n"
+        'argv = ["python3", "-c", '
+        '"from pathlib import Path; '
+        "assert Path('note.txt').read_text().startswith('new')\"]\n"
+        "timeout_seconds = 10\n",
+        encoding="utf-8",
+    )
+    api_key = "sk-unmistakably-fake-newapi-flow"
+    fake_backend.values["newapi"] = api_key
+    actions = [
+        {"kind": "read_file", "arguments": {"path": "note.txt"}},
+        {
+            "kind": "replace_text",
+            "arguments": {
+                "path": "note.txt",
+                "old": "old\n",
+                "new": "new\n",
+                "count": 1,
+            },
+        },
+        {"kind": "run_validation", "arguments": {}},
+        {"kind": "finish", "arguments": {"summary": "updated note"}},
+    ]
+    requests = []
+
+    class Response:
+        def __init__(self, action_payload):
+            self.action_payload = action_payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(self.action_payload)
+                            }
+                        }
+                    ]
+                }
+            ).encode()
+
+    def opener(request, *, timeout: int):
+        requests.append((request, timeout))
+        return Response(actions.pop(0))
+
+    assert main(
+        [
+            "serve",
+            "--provider",
+            "newapi",
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(tmp_path),
+        ],
+        backend=fake_backend,
+        uvicorn_runner=runner,
+        opener=opener,
+    ) == 0
+
+    app, _options = runner.calls[0]
+    workspace = tmp_path / "newapi-complete-workspace"
+    workspace.mkdir()
+    target = workspace / "note.txt"
+    target.write_text("old\n", encoding="utf-8")
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        created = client.post(
+            "/api/tasks",
+            json={
+                "description": "replace old with new and validate",
+                "workspace": str(workspace),
+                "provider": "newapi",
+            },
+        )
+        task_id = created.json()["id"]
+        for _step in range(4):
+            advanced = client.post(f"/api/tasks/{task_id}/advance")
+            assert advanced.status_code == 200
+        detail = client.get(f"/api/tasks/{task_id}").json()
+
+    assert advanced.json()["status"] == "succeeded"
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert actions == []
+    assert len(requests) == 4
+    assert all(
+        request.get_header("Authorization") == f"Bearer {api_key}"
+        for request, _timeout in requests
+    )
+    assert all(
+        json.loads(request.data)["response_format"] == {"type": "json_object"}
+        for request, _timeout in requests
+    )
+    event_kinds = {event["kind"] for event in detail["events"]}
+    assert {"action", "governance_decision", "tool_result", "validation"} <= (
+        event_kinds
+    )
 
 
 def test_serve_redacts_injected_opener_error(

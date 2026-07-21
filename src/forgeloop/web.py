@@ -44,7 +44,14 @@ class AppDependencies:
     csrf_secret: bytes
     demo_runner: Callable[[], dict[str, object]] | None
     provider_name: str = "demo"
+    provider_model: str | None = None
     allowed_hosts: frozenset[str] = _DEFAULT_ALLOWED_HOSTS
+
+    @property
+    def provider_label(self) -> str:
+        if self.provider_model:
+            return f"{self.provider_name} · {self.provider_model}"
+        return self.provider_name
 
 
 class TaskCreateRequest(BaseModel):
@@ -138,6 +145,7 @@ def create_app(dependencies: AppDependencies) -> FastAPI:
             {
                 "csrf_token": token,
                 "provider_name": dependencies.provider_name,
+                "provider_label": dependencies.provider_label,
                 **(context or {}),
             },
         )

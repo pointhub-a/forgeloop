@@ -3,7 +3,7 @@
 {% block content %}
   <section aria-labelledby="settings-heading">
     <h1 id="settings-heading">凭据设置</h1>
-    <p>{{ provider_name }}：{% if credential.configured %}已配置{% else %}未配置{% endif %}</p>
+    <p>{{ provider_label }}：{% if credential.configured %}已配置{% else %}未配置{% endif %}</p>
     <p>存储来源：{{ credential.source }}</p>
     <form action="/settings/credentials/{{ provider_name }}" method="post">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">

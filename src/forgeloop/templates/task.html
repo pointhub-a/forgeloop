@@ -4,7 +4,7 @@
   <section aria-labelledby="task-heading">
     <p class="status-label">{{ task.status.value }}</p>
     <h1 id="task-heading">{{ task.description }}</h1>
-    <p>执行模式：<strong>{{ provider_name }}</strong></p>
+    <p>执行模式：<strong>{{ provider_label }}</strong></p>
     <dl class="trace">
       <dt>Task ID</dt><dd class="task-id">{{ task.id }}</dd>
       <dt>工作区</dt><dd>{{ task.workspace }}</dd>

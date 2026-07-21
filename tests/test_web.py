@@ -192,6 +192,48 @@ def test_home_explains_product_and_security_boundary(client: TestClient) -> None
     assert "工作区" in response.text
 
 
+def test_real_provider_pages_display_provider_and_model_without_changing_identity(
+    web_harness: WebHarness, tmp_path: Path
+) -> None:
+    dependencies = AppDependencies(
+        task_service=web_harness.task_service,
+        task_repository=web_harness.task_repository,
+        credential_service=CredentialService(MemoryCredentialBackend()),
+        csrf_secret=b"newapi-display-csrf-secret",
+        demo_runner=None,
+        provider_name="newapi",
+        provider_model="qwen-turbo",
+    )
+    workspace = tmp_path / "newapi-display-workspace"
+    workspace.mkdir()
+
+    with TestClient(create_app(dependencies)) as newapi_client:
+        home = newapi_client.get("/")
+        settings = newapi_client.get("/settings")
+        created = newapi_client.post(
+            "/api/tasks",
+            json={
+                "description": "display active model",
+                "workspace": str(workspace),
+                "provider": "newapi",
+            },
+        )
+        task = newapi_client.get(f"/tasks/{created.json()['id']}")
+
+    assert created.status_code == 201
+    for response in (home, settings, task):
+        assert response.status_code == 200
+        assert "newapi · qwen-turbo" in response.text
+    assert 'name="provider" value="newapi"' in home.text
+
+
+def test_demo_provider_label_has_no_empty_model_separator(client: TestClient) -> None:
+    response = client.get("/")
+
+    assert "执行模式：<strong>demo</strong>" in response.text
+    assert "demo ·" not in response.text
+
+
 def test_settings_never_returns_credential(
     client: TestClient,
     credential_service: CredentialService,

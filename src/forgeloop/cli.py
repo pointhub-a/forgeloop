@@ -28,7 +28,11 @@ from forgeloop.feedback import ProgressTracker, ValidatorRunner
 from forgeloop.loop import AgentLoop
 from forgeloop.memory import MemoryStore
 from forgeloop.policy import PolicyEngine
-from forgeloop.providers import OpenAICompatibleProvider, ScriptedProvider
+from forgeloop.providers import (
+    NewAPIProvider,
+    OpenAICompatibleProvider,
+    ScriptedProvider,
+)
 from forgeloop.repository import ApprovalRepository, TaskRepository
 from forgeloop.service import TaskService
 from forgeloop.tools import ToolRuntime
@@ -43,7 +47,9 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument("--json", action="store_true", dest="as_json")
 
     serve = commands.add_parser("serve", help="run the local Web application")
-    serve.add_argument("--provider", choices=("demo", "openai"), default="demo")
+    serve.add_argument(
+        "--provider", choices=("demo", "openai", "newapi"), default="demo"
+    )
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument(
@@ -88,10 +94,10 @@ def _report_error(
     return 2
 
 
-def _default_credential_backend() -> CredentialBackend:
+def _default_credential_backend(provider: str) -> CredentialBackend:
     secret_file = os.environ.get("FORGELOOP_SECRET_FILE")
     if secret_file:
-        return SecretFileBackend(secret_file, provider="openai")
+        return SecretFileBackend(secret_file, provider=provider)
     return KeyringBackend()
 
 
@@ -100,10 +106,12 @@ def _run_credentials(
 ) -> int:
     registered_secrets: list[str] = []
     try:
-        service = CredentialService(
-            backend if backend is not None else _default_credential_backend()
-        )
         provider = args.provider
+        service = CredentialService(
+            backend
+            if backend is not None
+            else _default_credential_backend(provider)
+        )
         if args.credential_command == "set":
             secret = getpass.getpass(f"Credential for {provider}: ")
             registered_secrets.append(secret)
@@ -157,9 +165,11 @@ def _loop_factory(
 
     def factory(workspace: Path, task_id: str) -> AgentLoop:
         runtime = ToolRuntime(workspace, config)
-        if provider_name == "openai":
+        if provider_name in {"openai", "newapi"}:
             if api_key is None:
-                raise RuntimeError("OpenAI provider credential is unavailable")
+                raise RuntimeError(
+                    f"{provider_name} provider credential is unavailable"
+                )
             provider_options: dict[str, object] = {
                 "base_url": config.provider_base_url,
                 "model": config.provider_model,
@@ -168,7 +178,12 @@ def _loop_factory(
             }
             if opener is not None:
                 provider_options["opener"] = opener
-            provider = OpenAICompatibleProvider(**provider_options)
+            provider_class = (
+                OpenAICompatibleProvider
+                if provider_name == "openai"
+                else NewAPIProvider
+            )
+            provider = provider_class(**provider_options)
         else:
             provider = ScriptedProvider(
                 [demo_response] * config.max_identical_actions
@@ -222,14 +237,19 @@ def _run_serve(
         data_dir = args.data_dir.expanduser().resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
         credential_service = CredentialService(
-            backend if backend is not None else _default_credential_backend()
+            backend
+            if backend is not None
+            else _default_credential_backend(args.provider)
         )
-        if args.provider == "openai":
-            api_key = credential_service.get_for_provider("openai")
+        if args.provider in {"openai", "newapi"}:
+            api_key = credential_service.get_for_provider(args.provider)
             if api_key is None:
+                provider_label = (
+                    "OpenAI" if args.provider == "openai" else "New API"
+                )
                 print(
-                    "OpenAI credential is not configured; use "
-                    "'forgeloop credentials set openai'.",
+                    f"{provider_label} credential is not configured; use "
+                    f"'forgeloop credentials set {args.provider}'.",
                     file=sys.stderr,
                 )
                 return 2
@@ -257,6 +277,11 @@ def _run_serve(
                 data_dir / "demo"
             ).model_dump(mode="json"),
             provider_name=args.provider,
+            provider_model=(
+                config.provider_model
+                if args.provider in {"openai", "newapi"}
+                else None
+            ),
             allowed_hosts=frozenset(
                 {"localhost", "127.0.0.1", "::1", "testserver"}
                 | explicit_allowed_hosts
