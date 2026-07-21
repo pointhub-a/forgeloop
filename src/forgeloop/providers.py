@@ -96,6 +96,14 @@ class Provider(Protocol):
     ) -> str: ...
 
 
+def _normalize_message(message: dict[str, str]) -> dict[str, str]:
+    role = message["role"]
+    content = message["content"]
+    if role in _API_MESSAGE_ROLES:
+        return {"role": role, "content": content}
+    return {"role": "user", "content": f"[{role}] {content}"}
+
+
 def _post_json(
     *,
     base_url: str,
@@ -214,11 +222,7 @@ class OpenAICompatibleProvider:
 
     @staticmethod
     def _normalize_message(message: dict[str, str]) -> dict[str, str]:
-        role = message["role"]
-        content = message["content"]
-        if role in _API_MESSAGE_ROLES:
-            return {"role": role, "content": content}
-        return {"role": "user", "content": f"[{role}] {content}"}
+        return _normalize_message(message)
 
 
 class NewAPIProvider:
@@ -274,8 +278,7 @@ class NewAPIProvider:
             "messages": [
                 {"role": "system", "content": instruction},
                 *[
-                    OpenAICompatibleProvider._normalize_message(message)
-                    for message in messages
+                    _normalize_message(message) for message in messages
                 ],
             ],
             "response_format": {"type": "json_object"},
