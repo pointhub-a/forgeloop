@@ -155,3 +155,11 @@
 - SQLite 跨线程 RED：Service worker-thread memory 动作 → `1 failed`；显式 lifecycle test → `1 failed`。GREEN → `2 passed`。连接使用 `check_same_thread=False` 且所有访问由 `RLock` 串行化，并提供 `close`/context-manager 生命周期。
 - Task 4 账本已关闭：新增“不同前缀位于 8192 字符尾部窗口之外时指纹相同”与 `A,A,B,A,A,A` 连续失败重置回归。
 - 最终验证：`PATH="$PWD/.venv/bin:$PATH" make test`、离线机制演示、`pip check`、`compileall` 与 `git diff --check` 全部通过；Docker/GitLab/线上 URL 等外部限制保持与 Task 10 记录一致，未伪造验证结果。
+
+## 2026-07-21 — NEWAPI-IMPLEMENTATION
+
+- 范围：新增独立 `newapi` 模式，首先适配 njusehub/New API；官方 DeepSeek 与 DashScope 原生协议不在本轮范围。
+- RED/GREEN：Provider 请求首测 `1 failed`（类不存在）后转为 `17 passed`；提取/重试边界 `16 failed, 3 passed` 后转为 `19 passed`，Provider 全量 `35 passed`。
+- 安全审计：结构化 Provider 错误 `4 failed` 后转为 `4 passed`；Provider/Loop 回归 `67 passed`。错误事件只记录稳定 code、HTTP status、attempts 和 retryable，不记录 Key、上游正文或 reasoning。
+- 组合：CLI `newapi`/secret-file 三项 `3 failed` 后转绿；Web provider/model 显示 `1 failed, 1 passed` 后为 `2 passed`；伪网关完整 `read_file → replace_text → run_validation → finish` 流程通过。
+- 文档与配置：`njusehub.example.toml` 缺失测试 `1 failed` 后转为 `1 passed`；本地 `njusehub.toml` 加入 Git ignore，示例不含凭据。

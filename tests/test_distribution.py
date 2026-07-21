@@ -16,6 +16,22 @@ def test_example_configuration_loads() -> None:
     assert config.validators
 
 
+def test_njusehub_example_is_safe_and_local_override_is_ignored() -> None:
+    with (ROOT / "njusehub.example.toml").open("rb") as example_file:
+        example = tomllib.load(example_file)
+
+    assert example["provider_base_url"] == (
+        "https://njusehub.info/v1/chat/completions"
+    )
+    assert example["provider_model"] == "qwen-turbo"
+    assert example["provider_timeout_seconds"] == 20
+    assert "api_key" not in json.dumps(example).lower()
+    assert "njusehub.toml" in (
+        ROOT / ".gitignore"
+    ).read_text(encoding="utf-8").splitlines()
+    assert load_config(ROOT / "njusehub.example.toml").validators
+
+
 def test_package_metadata_exposes_cli_and_build_tool() -> None:
     with (ROOT / "pyproject.toml").open("rb") as project_file:
         project = tomllib.load(project_file)

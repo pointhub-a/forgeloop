@@ -126,6 +126,9 @@ running -> succeeded | failed | budget_exhausted | no_progress | cancelled
 
 - `ScriptedProvider` 按预设响应依次返回，耗尽时明确报错。
 - `OpenAICompatibleProvider` 使用单次 Chat Completions 风格 HTTP API，不含 Agent Runner。
+- `NewAPIProvider` 使用 Chat Completions `json_object`，在 system 消息中携带确定性 Action schema，并在本地严格解析；不执行 Provider 原生 `tool_calls`。
+- CLI 执行模式为 `demo | openai | newapi`；真实模式的凭据分别存储在同名独立槽位。
+- New API 的一个 Agent 步骤最多包含两次 HTTP 尝试。超时、连接失败、429、5xx 和空内容可重试一次；其他 4xx、畸形响应和非空非法 Action 不做传输重试。
 - Provider 不获得工具对象，不能绕过 Harness 执行动作。
 
 ### 5.3 Tool Runtime
@@ -190,7 +193,7 @@ running -> succeeded | failed | budget_exhausted | no_progress | cancelled
 - 首页：系统说明、新建任务表单和安全边界。
 - 任务页：状态、步骤、工具结果、验证报告和自动刷新事件轨迹。
 - 审批区：显示动作及风险原因，允许批准一次或拒绝。
-- 设置页：Provider、凭据状态、录入/更新/清除，不回显 Key。
+- 设置页：Provider、模型、凭据状态、录入/更新/清除，不回显 Key。真实模式显示 `provider · model`，机器身份仍使用精确 Provider 名称。
 - 演示页：启动固定 Mock 场景并展示确定性结果。
 
 API 最低集合：创建任务、读取任务、推进任务、批准/拒绝动作、取消任务、凭据状态/写入/清除、运行演示。修改接口使用 CSRF token；监听默认仅为 `127.0.0.1`。
@@ -266,13 +269,13 @@ Agent Loop ---- Provider Adapter ---- LLM HTTP API
 - pytest：参数化和临时目录适合确定性机制测试。
 - `keyring`：跨平台调用操作系统凭据存储；不可用时明确报错，不静默降级为明文。
 - Docker：提供一致分发；容器环境无法使用宿主 Keychain 时，以运行时 secret 文件作为安全来源，不写入镜像。
-- OpenAI-compatible HTTP adapter：减少供应商锁定；默认离线 Mock 可运行。真实适配器默认模型为 2026-07-17 官方模型指南中的成本敏感选项 `gpt-5.6-luna`，仍可通过 TOML 覆盖。
+- HTTP Provider adapters：`openai` 保留严格 `json_schema`；`newapi` 面向 New API 网关使用 `json_object` + 本地严格校验。默认离线 Mock 可运行，模型和 HTTPS 端点仍可通过 TOML 覆盖。
 
 不使用任何高层 Agent 框架。
 
 ## 10. 凭据与分发设计
 
-本机：设置页或 `forgeloop credentials set` 使用隐藏输入，将 Key 写入系统 Keychain；支持 status、update、clear。状态只显示“已配置”和来源。
+本机：设置页或 `forgeloop credentials set` 使用隐藏输入，将 Key 按 Provider 名称写入系统 Keychain；`openai` 与 `newapi` 不互相读取。支持 status、update、clear，状态只显示“已配置”和来源。
 
 容器：使用只读 Docker secret 文件挂载至 `/run/secrets/forgeloop_api_key`；环境变量仅作为显式兼容模式并在 README 标注进程环境可见风险。
 
