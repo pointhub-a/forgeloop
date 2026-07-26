@@ -167,3 +167,13 @@
 - 真实 njusehub 冒烟：`qwen-turbo` 与 `deepseek-v4-flash` 均在独立回环端口完成同一 4 步任务 `read_file → write_file → run_validation → finish`，最终 `succeeded` 且最新验证通过。qwen 单次推进约 1.3–2.6 秒，DeepSeek 约 2.5–6.6 秒；服务随后正常停止。记录不含 Key、响应正文或 reasoning。
 - 仓库审计：无 tracked `njusehub.toml`、`.forgeloop` 或 SQLite；令牌扫描只命中文档中的 Bearer/凭据说明文字与明确 fake fixtures，未发现真实凭据。
 - 独立代码审查：发现 Provider 失败恰逢 step/wall-time 预算终止时结构化原因未落入持久事件，以及缺少 DeepSeek 网关验收证据（2 Important）。前者先以 2 个失败回归测试复现，再调整事件顺序转绿；后者以真实 `deepseek-v4-flash` 完整任务关闭。
+
+## 2026-07-26 — GITHUB-CI-DELIVERY
+
+- 范围：新增 `.github/workflows/ci.yml`，配置 GitHub 与南京大学 GitLab 远程地址；不执行公网 WebUI 部署。
+- RED：GitHub CI 契约测试因工作流文件不存在失败；README 的真实仓库与 GHCR 说明测试随后同样先失败。
+- GREEN：所有 push / pull request 依次运行 `unit-test` 与无发布权限的 `container-build`；仅 GitHub `main` push 运行 `container-publish`，使用 `GITHUB_TOKEN` 发布 GHCR 的 `sha-*` 与 `latest` 标签。
+- 安全评审：首轮发现 `packages: write` 为 workflow-wide 且 Action 使用可变 major tag（2 Important）。修复后只给 main-only 发布 job 包写权限，所有第三方 Action 固定到经核对的完整 commit SHA；复审无 Critical/Important，结论 Ready to merge。
+- 本地验证：工作流 YAML 语法通过；distribution tests `9 passed`；全量测试 `327 passed`；`compileall` 与 `git diff --check` 通过。本机无 Docker，不能替代 GitHub runner 的真实镜像构建结果。
+- 学术规范：课程原文禁止 AI 代写个人反思，因此 `REFLECTION.md` 保留学生本人工作表；智能体未生成冒充学生判断的 1500–2500 字成文报告。
+- 外部状态：GitHub 仓库初始为空；南京大学 GitLab 仅有独立的 `Initial commit`。最终 push 与 CI 状态在本记录之后据实补充，不预先宣称通过。

@@ -47,6 +47,25 @@ def test_gitlab_ci_defines_top_level_unit_test_job() -> None:
     assert "python3 -m pytest -q" in pipeline
 
 
+def test_github_ci_tests_every_change_and_publishes_main_container() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert re.search(r"(?m)^\s*pull_request:\s*$", workflow)
+    assert re.search(r"(?m)^\s*push:\s*$", workflow)
+    assert re.search(r"(?m)^\s*unit-test:\s*$", workflow)
+    assert "python -m pytest -q" in workflow
+    assert re.search(r"(?m)^\s*container-build:\s*$", workflow)
+    assert re.search(r"(?m)^\s*container-publish:\s*$", workflow)
+    assert "push: false" in workflow
+    assert workflow.count("packages: write") == 1
+    assert not re.search(r"(?m)^\s*uses:\s*[^\s@]+@v\d+\s*$", workflow)
+    assert workflow.count("docker/build-push-action@") == 2
+    assert "registry: ghcr.io" in workflow
+    assert "github.ref == 'refs/heads/main'" in workflow
+
+
 def test_dockerfile_has_complete_runtime_security_contract() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
@@ -85,6 +104,14 @@ def test_readme_has_required_course_sections() -> None:
         "已知限制",
     ):
         assert re.search(rf"(?m)^## {re.escape(heading)}\s*$", readme)
+
+
+def test_readme_documents_github_ci_and_container_registry() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "https://github.com/pointhub-a/forgeloop" in readme
+    assert "ghcr.io/pointhub-a/forgeloop:latest" in readme
+    assert ".github/workflows/ci.yml" in readme
 
 
 def test_readme_uses_cross_shell_hidden_secret_file_setup() -> None:

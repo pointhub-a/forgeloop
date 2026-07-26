@@ -80,7 +80,15 @@ Compose 冷启动等价命令：
 docker compose up --build
 ```
 
-健康检查地址为 <http://127.0.0.1:8000/healthz>。镜像使用多阶段 `python:3.12-slim` 构建，只安装 wheel，最终以 UID 10001 的非 root `forgeloop` 用户运行；源包层为只读。GitLab 流水线先执行 `unit-test`，通过后执行 `container-build`。镜像 registry 与公开 WebUI URL 需要仓库所有者在其 GitLab/容器平台上配置和发布，本仓库不伪造外部执行记录。
+健康检查地址为 <http://127.0.0.1:8000/healthz>。镜像使用多阶段 `python:3.12-slim` 构建，只安装 wheel，最终以 UID 10001 的非 root `forgeloop` 用户运行；源包层为只读。
+
+GitHub 仓库为 <https://github.com/pointhub-a/forgeloop>，南京大学 GitLab 镜像仓库为 <https://git.nju.edu.cn/skh/forgeloop>。`.github/workflows/ci.yml` 在每次 push 和 pull request 时先运行 Python 测试，再构建容器；push 到 `main` 时还会使用仓库自带的 `GITHUB_TOKEN` 发布 `sha-*` 与 `latest` 标签到 GHCR。首次发布后需在 GitHub Package settings 中把包设为 Public，公开镜像可这样获取：
+
+```bash
+docker pull ghcr.io/pointhub-a/forgeloop:latest
+```
+
+GitLab 流水线同样先执行 `unit-test`，通过后执行 `container-build`。最终 GitHub Actions/GitLab CI pass 记录、GHCR 公开可见性与公开 WebUI URL 需要仓库所有者在对应平台实际确认，本仓库不伪造外部执行记录。
 
 真实容器模式必须挂载 owner-only 文件，并让进程以该文件所有者 UID/GID 运行。下列命令不会把 Key 写入命令参数、镜像或环境变量；`FORGELOOP_SECRET_FILE` 的值只是容器内路径：
 
@@ -150,6 +158,7 @@ njusehub.example.toml   njusehub/New API 的无凭据示例配置
 Dockerfile           wheel 多阶段 OCI 构建
 compose.yaml         无凭据 demo 冷启动
 .gitlab-ci.yml       unit-test 与 container-build jobs
+.github/workflows/ci.yml  GitHub 测试、容器构建与 GHCR 发布
 SPEC.md / PLAN.md    已批准规约与实现计划
 SPEC_PROCESS.md      规约冷启动验证证据
 AGENT_LOG.md         TDD、评审和提交过程证据
@@ -183,7 +192,7 @@ ForgeLoop 提供这些代码级保证：工作区路径在解析符号链接后�
 - 首版一次只在一个进程内串行推进单个任务，不提供多 Agent、分布式队列、向量检索或主动恢复。
 - SQLite 适合单机；不支持多副本共享写入。WebUI 没有公网部署所需的认证、TLS、限流和租户隔离。
 - 官方 `python:3.12-slim` 提供 amd64/arm64 等平台镜像；实际目标项目工具链和本地 Keyring 后端仍受宿主平台限制。Windows 原生路径尚未做与 POSIX 等量的端到端容器验证。
-- 公开 registry、最终 GitLab CI pass 记录和线上 URL 需要所有者账户权限，必须在提交前由所有者实际推送/部署并记录，不能由本地测试替代。
+- GHCR 包首次发布后可能默认为私有；公开 registry、最终 GitHub Actions/GitLab CI pass 记录和线上 URL 需要所有者账户权限，必须在提交前由所有者实际确认/部署并记录，不能由本地测试替代。
 
 常见故障：`credential backend is unavailable` 表示系统 Keyring/Secret Service 不可用；`secret file must not grant group or other permissions` 需执行 `chmod 600` 并确认进程 UID 是文件所有者；Provider HTTP 401 表示当前模式的凭据无效或未被网关接受；HTTP 403 常由 Host 未加入 `--allowed-host` 引起；wildcard bind 错误需同时给出 `--allow-remote` 和至少一个具体 allowed host；容器写入失败需确认 `/workspace`、`/data` 的宿主目录归当前映射 UID 所有。
 
