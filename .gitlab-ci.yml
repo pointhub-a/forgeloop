@@ -11,14 +11,18 @@ unit-test:
     - python3 -m pytest -q
 
 container-build:
-  image: docker:27-cli
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
   stage: build
-  services:
-    - docker:27-dind
   variables:
-    DOCKER_HOST: "tcp://docker:2376"
-    DOCKER_TLS_CERTDIR: "/certs"
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
   needs:
     - unit-test
   script:
-    - docker build --pull -t "${CI_REGISTRY_IMAGE:-forgeloop}:${CI_COMMIT_SHA}" .
+    - |
+      buildctl-daemonless.sh build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=. \
+        --output type=oci,dest=/tmp/forgeloop-image.tar

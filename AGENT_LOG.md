@@ -177,3 +177,10 @@
 - 本地验证：工作流 YAML 语法通过；distribution tests `9 passed`；全量测试 `327 passed`；`compileall` 与 `git diff --check` 通过。本机无 Docker，不能替代 GitHub runner 的真实镜像构建结果。
 - 学术规范：课程原文禁止 AI 代写个人反思，因此 `REFLECTION.md` 保留学生本人工作表；智能体未生成冒充学生判断的 1500–2500 字成文报告。
 - 外部状态：CI 实现提交为 `0846b9c`。GitHub 仓库初始为空；南京大学 GitLab 仅有独立的 `Initial commit`。GitHub HTTPS/SSH 与南大 GitLab HTTPS 推送均因本机没有对应账户凭据而在写入前失败，远程未发生半完成变更；需要学生本人登录后推送并确认 CI，不预先宣称通过。
+
+## 2026-07-26 — GITLAB-CI-RUNNER-FIX
+
+- 真实流水线失败：南大共享 Runner 未启用 privileged mode，`docker:27-dind` 无法挂载 `/sys/kernel/security`，job 最终无法连接 `tcp://docker:2376`；代码、Dockerfile 与仓库认证均未失败。
+- RED：新增无特权构建契约测试后，因 `.gitlab-ci.yml` 缺少 rootless BuildKit 而得到 `1 failed`。
+- GREEN：按 GitLab 官方 BuildKit 指南改用 `moby/buildkit:rootless`、`buildctl-daemonless.sh` 与 `--oci-worker-no-process-sandbox`，输出 OCI image 到 `/tmp`，移除 DinD service、`DOCKER_HOST` 和 TLS daemon 配置。
+- 本地验证：distribution tests `10 passed`；全量测试 `328 passed`。最终 GitLab runner 结果必须以修复提交触发的真实流水线为准。
