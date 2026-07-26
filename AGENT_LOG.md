@@ -176,4 +176,4 @@
 - 安全评审：首轮发现 `packages: write` 为 workflow-wide 且 Action 使用可变 major tag（2 Important）。修复后只给 main-only 发布 job 包写权限，所有第三方 Action 固定到经核对的完整 commit SHA；复审无 Critical/Important，结论 Ready to merge。
 - 本地验证：工作流 YAML 语法通过；distribution tests `9 passed`；全量测试 `327 passed`；`compileall` 与 `git diff --check` 通过。本机无 Docker，不能替代 GitHub runner 的真实镜像构建结果。
 - 学术规范：课程原文禁止 AI 代写个人反思，因此 `REFLECTION.md` 保留学生本人工作表；智能体未生成冒充学生判断的 1500–2500 字成文报告。
-- 外部状态：GitHub 仓库初始为空；南京大学 GitLab 仅有独立的 `Initial commit`。最终 push 与 CI 状态在本记录之后据实补充，不预先宣称通过。
+- 外部状态：CI 实现提交为 `0846b9c`。GitHub 仓库初始为空；南京大学 GitLab 仅有独立的 `Initial commit`。GitHub HTTPS/SSH 与南大 GitLab HTTPS 推送均因本机没有对应账户凭据而在写入前失败，远程未发生半完成变更；需要学生本人登录后推送并确认 CI，不预先宣称通过。
