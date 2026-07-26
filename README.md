@@ -88,7 +88,7 @@ GitHub 仓库为 <https://github.com/pointhub-a/forgeloop>，南京大学 GitLab
 docker pull ghcr.io/pointhub-a/forgeloop:latest
 ```
 
-GitLab 流水线同样先执行 `unit-test`，通过后执行 `container-build`。最终 GitHub Actions/GitLab CI pass 记录、GHCR 公开可见性与公开 WebUI URL 需要仓库所有者在对应平台实际确认，本仓库不伪造外部执行记录。
+GitHub Actions 负责容器构建与 GHCR 发布。南京大学自建 GitLab Runner 同时禁止 privileged DinD 与 rootless user namespace，因此 `.gitlab-ci.yml` 只执行课程明确要求的 `unit-test`；容器分发证据以 GitHub Actions 和公开 GHCR 镜像为准。最终 GitHub Actions/GitLab CI pass 记录、GHCR 公开可见性与公开 WebUI URL 需要仓库所有者在对应平台实际确认，本仓库不伪造外部执行记录。
 
 真实容器模式必须挂载 owner-only 文件，并让进程以该文件所有者 UID/GID 运行。下列命令不会把 Key 写入命令参数、镜像或环境变量；`FORGELOOP_SECRET_FILE` 的值只是容器内路径：
 
@@ -157,7 +157,7 @@ forgeloop.example.toml  完整、无凭据的示例配置
 njusehub.example.toml   njusehub/New API 的无凭据示例配置
 Dockerfile           wheel 多阶段 OCI 构建
 compose.yaml         无凭据 demo 冷启动
-.gitlab-ci.yml       unit-test 与 container-build jobs
+.gitlab-ci.yml       南大课程 Runner 的 unit-test job
 .github/workflows/ci.yml  GitHub 测试、容器构建与 GHCR 发布
 SPEC.md / PLAN.md    已批准规约与实现计划
 SPEC_PROCESS.md      规约冷启动验证证据

@@ -182,5 +182,6 @@
 
 - 真实流水线失败：南大共享 Runner 未启用 privileged mode，`docker:27-dind` 无法挂载 `/sys/kernel/security`，job 最终无法连接 `tcp://docker:2376`；代码、Dockerfile 与仓库认证均未失败。
 - RED：新增无特权构建契约测试后，因 `.gitlab-ci.yml` 缺少 rootless BuildKit 而得到 `1 failed`。
-- GREEN：按 GitLab 官方 BuildKit 指南改用 `moby/buildkit:rootless`、`buildctl-daemonless.sh` 与 `--oci-worker-no-process-sandbox`，输出 OCI image 到 `/tmp`，移除 DinD service、`DOCKER_HOST` 和 TLS daemon 配置。
-- 本地验证：distribution tests `10 passed`；全量测试 `328 passed`。最终 GitLab runner 结果必须以修复提交触发的真实流水线为准。
+- 首次修复：按 GitLab 官方 BuildKit 指南改用 `moby/buildkit:rootless`、`buildctl-daemonless.sh` 与 `--oci-worker-no-process-sandbox`，本地契约转绿；真实 Runner 再次以 `fork/exec /proc/self/exe: operation not permitted` 失败，证明其 seccomp 同时禁止 rootless user namespace。
+- 最终决策：容器构建与公开分发由已经通过的 GitHub Actions/GHCR 提供；南大 `.gitlab-ci.yml` 只保留课程最终清单明确要求的 `unit-test`，不伪装受限 Runner 能构建容器。契约测试改为阻止 DinD/BuildKit job 被重新加入。
+- 本地验证：distribution tests `10 passed`；全量测试 `328 passed`。最终 GitLab runner 结果必须以本次调整触发的真实流水线为准。

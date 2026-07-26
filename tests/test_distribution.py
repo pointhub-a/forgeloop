@@ -47,15 +47,12 @@ def test_gitlab_ci_defines_top_level_unit_test_job() -> None:
     assert "python3 -m pytest -q" in pipeline
 
 
-def test_gitlab_container_build_does_not_require_privileged_docker() -> None:
+def test_gitlab_ci_avoids_container_build_on_restricted_course_runner() -> None:
     pipeline = (ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8")
 
-    assert "moby/buildkit:rootless" in pipeline
-    assert "BUILDKITD_FLAGS: --oci-worker-no-process-sandbox" in pipeline
-    assert "buildctl-daemonless.sh build" in pipeline
-    assert "--output type=oci,dest=/tmp/forgeloop-image.tar" in pipeline
+    assert not re.search(r"(?m)^container-build:\s*$", pipeline)
     assert "docker:27-dind" not in pipeline
-    assert "DOCKER_HOST" not in pipeline
+    assert "moby/buildkit:rootless" not in pipeline
 
 
 def test_github_ci_tests_every_change_and_publishes_main_container() -> None:

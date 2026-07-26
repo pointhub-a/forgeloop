@@ -1,6 +1,5 @@
 stages:
   - test
-  - build
 
 unit-test:
   image: python:3.12-slim
@@ -9,20 +8,3 @@ unit-test:
     - python3 -m pip install --no-cache-dir -e ".[dev]"
   script:
     - python3 -m pytest -q
-
-container-build:
-  image:
-    name: moby/buildkit:rootless
-    entrypoint: [""]
-  stage: build
-  variables:
-    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
-  needs:
-    - unit-test
-  script:
-    - |
-      buildctl-daemonless.sh build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=. \
-        --output type=oci,dest=/tmp/forgeloop-image.tar
